@@ -43,7 +43,7 @@ pip install -r requirements-dev.txt
 ### Iteration 2 - Data Layer (20 points)
 - [x] (5) Setup SQLAlchemy async engine/session
 - [x] (5) Add models (`pair`, `signal`, `analysis_run`)
-- [ ] (5) Setup Alembic and first migration
+- [x] (5) Setup Alembic and first migration
 - [ ] (5) Implement repository layer
 
 ### Iteration 3 - Services + AI + Scheduler (21 points)
@@ -201,6 +201,59 @@ async def handler(session: DBSessionDep) -> ...:
 The health endpoint round-trips a `SELECT 1` to surface DB reachability:
 - `database.status == "ok"` → pool reachable
 - `database.status == "down"` → connect/select failed → overall status downgrades to `down`
+
+### Migrations (Iteration 2.3 deliverable)
+
+Alembic owns the schema lifecycle. The configuration lives at the
+backend root (`alembic.ini`, `migrations/`) and is wired to share two
+things with the running application:
+
+1. **`Settings.database_url`** — `migrations/env.py` resolves the URL
+   via `get_settings()` rather than re-declaring it in `alembic.ini`,
+   so a typo in `.env` is rejected by Pydantic instead of producing a
+   confusing connect failure mid-migration.
+2. **`Base.metadata`** — `target_metadata` points at the same registry
+   the ORM models populate, which is the contract autogenerate relies
+   on. Importing `app.models` registers every table; `compare_type`
+   and `compare_server_default` are enabled so type/default drift is
+   surfaced rather than silently ignored.
+
+`env.py` runs migrations through an **async** engine
+(`async_engine_from_config` + `connection.run_sync`) because the
+application URL is `postgresql+asyncpg://…`. Maintaining a parallel
+sync URL was rejected — every duplicated config field is a future
+incident.
+
+Common workflows (run from the `backend/` directory with the venv
+active):
+
+```bash
+# Apply all pending migrations to the live database
+alembic upgrade head
+
+# Roll back the most recent migration (development only — production
+# rollbacks are reviewed and applied through the deploy pipeline)
+alembic downgrade -1
+
+# Generate a new migration from model changes
+alembic revision --autogenerate -m "describe the change"
+
+# Render SQL without touching the database — useful for review and for
+# DBAs who want to apply migrations through their own tooling
+alembic upgrade head --sql > /tmp/upgrade.sql
+
+# Inspect the revision graph
+alembic history --verbose
+alembic current
+```
+
+The first migration (`0001_initial_schema`) creates `pairs`,
+`analysis_runs`, `signals`, the three native enums
+(`analysis_run_status`, `analysis_run_trigger`, `signal_direction`),
+and every check / unique / foreign-key / index named by the metadata
+naming convention. Constraint names are deterministic (driven by the
+convention bound on `Base.metadata`) so cross-database downgrades and
+diff-driven autogenerate runs produce stable output.
 
 ## 🧪 Run
 ```bash
