@@ -3,42 +3,51 @@
 ## ✅ Goal
 Create a modern **Next.js + React + TypeScript** frontend with all required packages for dashboards, charts, forms, state, and API integrations.
 
-## 📌 Latest Versions (verified on 2026-04-22)
-- `next`: `16.2.4`
-- `react`: `19.2.5`
-- `react-dom`: `19.2.5`
+## 📌 Installed Versions (verified on 2026-05-08)
+- `next`: `16.2.6`
+- `react`: `19.2.6`
+- `react-dom`: `19.2.6`
 - `typescript`: `6.0.3`
 - `tailwindcss`: `4.2.4`
 - `@tailwindcss/postcss`: `4.2.4`
-- `postcss`: `8.5.10`
-- `@tanstack/react-query`: `5.99.2`
-- `axios`: `1.15.2`
-- `zustand`: `5.0.12`
-- `react-hook-form`: `7.73.1`
-- `zod`: `4.3.6`
-- `lightweight-charts`: `5.1.0`
-- `eslint`: `10.2.1`
-- `eslint-config-next`: `16.2.4`
-- `@types/node`: `25.6.0`
+- `postcss`: `8.5.14`
+- `@tanstack/react-query`: `5.100.9`
+- `axios`: `1.16.0`
+- `zustand`: `5.0.13`
+- `react-hook-form`: `7.75.0`
+- `zod`: `4.4.3`
+- `lightweight-charts`: `5.2.0`
+- `eslint`: `9.39.4`
+- `eslint-config-next`: `16.2.6`
+- `@types/node`: `25.6.2`
 - `@types/react`: `19.2.14`
 - `@types/react-dom`: `19.2.3`
+
+> Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain is still compatible with ESLint 9.x. The project uses the newest compatible ESLint 9 release so linting remains reliable.
+
+## 📍 Current Progress
+- Iteration 1 is complete: foundation, strict TypeScript, Tailwind, typed API client, and React Query provider are in place.
+- The first screen is a health-backed dashboard shell wired to `GET /api/v1/health`.
+- `any` is not allowed by ESLint (`@typescript-eslint/no-explicit-any: error`).
+- `postcss` is overridden to `8.5.14` so `npm audit --audit-level=moderate` reports no vulnerabilities.
+- Verified with `npm run check` and a local smoke test returning `HTTP/1.1 200 OK`.
 
 ## ⚡ Setup Commands
 ```bash
 cd frontend
 npm init -y
-npm install next@16.2.4 react@19.2.5 react-dom@19.2.5 axios@1.15.2 @tanstack/react-query@5.99.2 zustand@5.0.12 react-hook-form@7.73.1 zod@4.3.6 lightweight-charts@5.1.0 clsx@2.1.1 class-variance-authority@0.7.1 tailwind-merge@3.5.0
-npm install -D typescript@6.0.3 @types/node@25.6.0 @types/react@19.2.14 @types/react-dom@19.2.3 tailwindcss@4.2.4 @tailwindcss/postcss@4.2.4 postcss@8.5.10 eslint@10.2.1 eslint-config-next@16.2.4
+npm install next@16.2.6 react@19.2.6 react-dom@19.2.6 axios@1.16.0 @tanstack/react-query@5.100.9 zustand@5.0.13 react-hook-form@7.75.0 zod@4.4.3 lightweight-charts@5.2.0 clsx@2.1.1 class-variance-authority@0.7.1 tailwind-merge@3.5.0
+npm install -D typescript@6.0.3 @types/node@25.6.2 @types/react@19.2.14 @types/react-dom@19.2.3 tailwindcss@4.2.4 @tailwindcss/postcss@4.2.4 postcss@8.5.14 eslint@9.39.4 eslint-config-next@16.2.6
 ```
 
 ## 🧩 Iterations and Points
 
 ### Iteration 1 - Foundation (13 points)
-- [ ] (3) Create Next app structure (`src/app`, layouts, route groups)
-- [ ] (2) Configure TypeScript, ESLint, path aliases
-- [ ] (3) Configure Tailwind and global styles
-- [ ] (3) Setup API layer (`axios` client + interceptors)
-- [ ] (2) Setup React Query provider
+- [x] (3) Create Next app structure (`src/app`, layouts, route groups)
+- [x] (2) Configure TypeScript, ESLint, path aliases
+- [x] (3) Configure Tailwind and global styles
+- [x] (3) Setup API layer (`axios` client + interceptors)
+- [x] (2) Setup React Query provider
 
 ### Iteration 2 - Core UI (16 points)
 - [ ] (3) Build shared UI components (`Button`, `Card`, `Badge`, `LoadingSpinner`)
@@ -62,7 +71,15 @@ npm install -D typescript@6.0.3 @types/node@25.6.0 @types/react@19.2.14 @types/r
 
 ## 🧪 Run
 ```bash
-npm run dev
+cd frontend
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+## ✅ Verify
+```bash
+cd frontend
+npm run check
+npm audit --audit-level=moderate
 ```
 
 ## 🔐 Env
