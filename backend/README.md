@@ -42,7 +42,7 @@ pip install -r requirements-dev.txt
 
 ### Iteration 2 - Data Layer (20 points)
 - [x] (5) Setup SQLAlchemy async engine/session
-- [ ] (5) Add models (`pair`, `signal`, `analysis_run`)
+- [x] (5) Add models (`pair`, `signal`, `analysis_run`)
 - [ ] (5) Setup Alembic and first migration
 - [ ] (5) Implement repository layer
 
@@ -154,6 +154,33 @@ All v1 responses follow a consistent shape so the frontend never has to special-
 ### App factory
 
 `create_app(settings: Settings | None = None)` builds an isolated FastAPI instance. Tests get a fresh app per fixture, so they can flip env vars (e.g. `app_env="production"`) and verify behaviour without mutating module state.
+
+### Domain models (Iteration 2.2 deliverable)
+
+ORM models live in `app/models/`. A single `Base` + `TimestampMixin`
+(`app/models/base.py`) is shared by every entity, and the package
+`__init__.py` re-exports all models so importing `app.models` is enough
+to register the full schema on `Base.metadata` (this is what Alembic
+autogenerate scans). A naming convention is bound to the metadata so
+generated constraint and index names are deterministic.
+
+| Table | Purpose | Notable fields / constraints |
+|---|---|---|
+| `pairs` | Lookup of tradable instruments (e.g. `EURUSD`, `XAUUSD`) | `symbol` unique + indexed, `is_active` (soft-disable) |
+| `analysis_runs` | One row per scheduled/manual pipeline execution | `status` + `trigger` are native PG enums; check constraint forces `finished_at >= started_at`; AI provider/model snapshotted for traceability |
+| `signals` | AI-generated trade signals | `direction` enum, `confidence` ∈ [0,1] (CHECK), `entry_price`/`stop_loss`/`take_profit` as `Numeric(20,8)`, `indicators_snapshot` as JSONB, composite index `(pair_id, generated_at)` for the "latest signals per pair" query, unique `(pair_id, analysis_run_id)` so a single run can't emit duplicate signals for a pair |
+
+Foreign-key behaviour:
+- `signals.pair_id → pairs.id` is `ON DELETE CASCADE`. Removing a pair
+  removes its signals.
+- `signals.analysis_run_id → analysis_runs.id` is `ON DELETE SET NULL`.
+  Run records have a shorter retention than signals, so the signal
+  must outlive the run.
+
+Money columns use SQLAlchemy `Numeric(20, 8)`, never `Float`. Float
+arithmetic is unsuitable for prices: rounding errors compound across
+pip-level operations and can change a signal's reported entry/SL/TP
+between writes.
 
 ### Database (Iteration 2.1 deliverable)
 
