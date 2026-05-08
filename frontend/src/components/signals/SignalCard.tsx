@@ -1,8 +1,10 @@
+import Link from "next/link";
 import { Brain, Clock3, ShieldCheck, Target } from "lucide-react";
 
 import { SignalBadge, SignalStatusBadge } from "@/components/signals/SignalBadge";
 import { Card } from "@/components/ui/Card";
-import { formatPercent, formatPrice, formatTime } from "@/lib/formatters";
+import { formatPercent, formatPrice, formatTime, getPricePrecision } from "@/lib/formatters";
+import { getPrimaryTarget } from "@/lib/trading";
 import { cn } from "@/lib/utils";
 import type { Signal } from "@/types/signal";
 
@@ -11,21 +13,10 @@ type SignalCardProps = {
   density: "comfortable" | "compact";
 };
 
-function pricePrecision(symbol: string): number {
-  if (symbol.includes("JPY")) {
-    return 3;
-  }
-
-  if (symbol === "XAUUSD") {
-    return 2;
-  }
-
-  return 5;
-}
-
 export function SignalCard({ signal, density }: SignalCardProps) {
-  const precision = pricePrecision(signal.symbol);
+  const precision = getPricePrecision(signal.symbol);
   const isCompact = density === "compact";
+  const primaryTarget = getPrimaryTarget(signal);
 
   return (
     <Card className="overflow-hidden transition-colors hover:border-[#6f5620]">
@@ -45,6 +36,12 @@ export function SignalCard({ signal, density }: SignalCardProps) {
               </div>
               <p className="mt-1 text-sm text-[var(--muted)]">{signal.displayName}</p>
             </div>
+            <Link
+              className="text-sm font-semibold text-[var(--blue-strong)] transition-colors hover:text-[#8ab8ff]"
+              href={`/pairs/${signal.symbol}`}
+            >
+              Pair view
+            </Link>
           </div>
 
           <div className="grid grid-cols-3 gap-2">
@@ -93,7 +90,7 @@ export function SignalCard({ signal, density }: SignalCardProps) {
                 Target
               </div>
               <p className="mt-2 text-lg font-semibold text-[#fff8df]">
-                {signal.takeProfit ? formatPrice(signal.takeProfit, precision) : "Pending"}
+                {primaryTarget ? formatPrice(primaryTarget, precision) : "Pending"}
               </p>
             </div>
           </div>
@@ -108,6 +105,15 @@ export function SignalCard({ signal, density }: SignalCardProps) {
               Generated {formatTime(signal.generatedAt)}
             </span>
             {signal.expiresAt ? <span>Expires {formatTime(signal.expiresAt)}</span> : null}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Link
+              className="inline-flex min-w-[132px] items-center justify-center rounded-lg border border-[#8f6a20] bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#0a0c10] transition-colors hover:bg-[var(--gold-strong)]"
+              href={`/signals/${signal.id}`}
+            >
+              Review signal
+            </Link>
           </div>
         </div>
       </div>

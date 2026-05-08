@@ -28,3 +28,22 @@ export function formatTime(value: string): string {
     day: "numeric"
   }).format(new Date(value));
 }
+
+export function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(value));
+}
+
+export function getPricePrecision(symbol: string): number {
+  if (symbol.includes("JPY")) {
+    return 3;
+  }
+
+  if (symbol === "XAUUSD") {
+    return 2;
+  }
+
+  return 5;
+}

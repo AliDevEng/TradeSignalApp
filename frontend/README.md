@@ -31,11 +31,13 @@ Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain
 ## Current Progress
 - Iteration 1 is complete: foundation, strict TypeScript, Tailwind, typed API client, and React Query provider are in place.
 - Iteration 2 is complete: shared UI primitives, dashboard shell, signal queue, signal cards, and Zustand filters are in place.
+- Iteration 3 is complete: typed mock candlestick data, chart overlays, pair detail pages, and signal reasoning views are in place.
 - The first screen is now a luxury fintech operations dashboard using a black, gold, blue, and red visual system backed by typed mock signal data until backend signal endpoints are implemented.
+- Dynamic routes now exist for `/pairs/[symbol]` and `/signals/[signalId]`.
 - Backend health remains wired to `GET /api/v1/health`.
 - `any` is not allowed by ESLint (`@typescript-eslint/no-explicit-any: error`).
 - `postcss` is overridden to `8.5.14` so `npm audit --audit-level=moderate` reports no vulnerabilities.
-- Verified with `npm run check` and a local smoke test returning `HTTP/1.1 200 OK`.
+- Verified with `npm run check` and local route probes returning `200 OK` for `/`, `/pairs/XAUUSD`, and `/signals/sig-xauusd-1`.
 
 ## Setup Commands
 ```bash
@@ -61,10 +63,10 @@ npm install -D typescript@6.0.3 @types/node@25.6.2 @types/react@19.2.14 @types/r
 - [x] (3) Add Zustand stores for UI + filters
 
 ### Iteration 3 - Trading Views (18 points)
-- [ ] (8) Implement candlestick chart with `lightweight-charts`
-- [ ] (4) Implement signal overlays (Entry/SL/TP lines)
-- [ ] (3) Build pair detail page
-- [ ] (3) Build signal details page with reasoning panel
+- [x] (8) Implement candlestick chart with `lightweight-charts`
+- [x] (4) Implement signal overlays (Entry/SL/TP lines)
+- [x] (3) Build pair detail page
+- [x] (3) Build signal details page with reasoning panel
 
 ### Iteration 4 - Quality + Delivery (13 points)
 - [ ] (3) Form validation with `react-hook-form` + `zod`

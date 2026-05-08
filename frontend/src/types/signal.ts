@@ -2,6 +2,30 @@ export type SignalDirection = "buy" | "sell" | "neutral";
 export type SignalStatus = "active" | "watchlist" | "expired";
 export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
+export type SignalTargetLabel = "TP1" | "TP2" | "TP3";
+
+export type SignalTarget = {
+  label: SignalTargetLabel;
+  price: number;
+};
+
+export type SignalReasoning = {
+  thesis: string;
+  confirmations: string[];
+  riskPlan: string;
+  invalidation: string;
+  executionNotes: string[];
+};
+
+export type PriceCandle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
 export type TradingPair = {
   id: number;
   symbol: string;
@@ -21,12 +45,13 @@ export type Signal = {
   confidence: number;
   entryPrice: number;
   stopLoss: number | null;
-  takeProfit: number | null;
+  targets: SignalTarget[];
   timeframe: Timeframe;
   generatedAt: string;
   expiresAt: string | null;
   riskReward: number | null;
   rationale: string;
+  reasoning: SignalReasoning;
 };
 
 export type SignalStats = {
