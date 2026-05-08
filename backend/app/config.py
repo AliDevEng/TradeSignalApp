@@ -1,6 +1,5 @@
 from functools import lru_cache
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,15 +33,14 @@ class Settings(BaseSettings):
     analysis_candle_count: int = 200
     analysis_timeframe: str = "1h"
 
-    # Active trading pairs — comma-separated in .env, exposed as a list
-    active_pairs: list[str] = ["XAUUSD", "GBPUSD", "EURUSD"]
+    # Comma-separated in .env (e.g. ACTIVE_PAIRS=XAUUSD,GBPUSD,EURUSD).
+    # pydantic-settings JSON-decodes list fields before validators run, so we
+    # store as str and parse to a list via the .pairs property.
+    active_pairs: str = "XAUUSD,GBPUSD,EURUSD"
 
-    @field_validator("active_pairs", mode="before")
-    @classmethod
-    def _parse_pairs(cls, v: str | list) -> list[str]:
-        if isinstance(v, str):
-            return [p.strip() for p in v.split(",") if p.strip()]
-        return v
+    @property
+    def pairs(self) -> list[str]:
+        return [p.strip() for p in self.active_pairs.split(",") if p.strip()]
 
     @property
     def is_development(self) -> bool:
