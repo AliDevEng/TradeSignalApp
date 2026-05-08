@@ -16,6 +16,11 @@ from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import Database
+from app.database.repository import (
+    AnalysisRunRepository,
+    PairRepository,
+    SignalRepository,
+)
 
 # ── Pagination ─────────────────────────────────────────────────────────────
 
@@ -73,3 +78,32 @@ async def get_db_session(database: DatabaseDep) -> AsyncIterator[AsyncSession]:
 
 
 DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+# ── Repositories ───────────────────────────────────────────────────────────
+#
+# Repositories are session-scoped: one instance per request, sharing the
+# request's session so multiple repos can stage work that commits
+# together. The factory functions are deliberately tiny — there's no
+# state worth caching, and FastAPI re-resolves them per call anyway.
+
+
+def get_pair_repository(session: DBSessionDep) -> PairRepository:
+    return PairRepository(session)
+
+
+PairRepositoryDep = Annotated[PairRepository, Depends(get_pair_repository)]
+
+
+def get_signal_repository(session: DBSessionDep) -> SignalRepository:
+    return SignalRepository(session)
+
+
+SignalRepositoryDep = Annotated[SignalRepository, Depends(get_signal_repository)]
+
+
+def get_analysis_run_repository(session: DBSessionDep) -> AnalysisRunRepository:
+    return AnalysisRunRepository(session)
+
+
+AnalysisRunRepositoryDep = Annotated[AnalysisRunRepository, Depends(get_analysis_run_repository)]

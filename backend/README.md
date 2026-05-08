@@ -44,7 +44,7 @@ pip install -r requirements-dev.txt
 - [x] (5) Setup SQLAlchemy async engine/session
 - [x] (5) Add models (`pair`, `signal`, `analysis_run`)
 - [x] (5) Setup Alembic and first migration
-- [ ] (5) Implement repository layer
+- [x] (5) Implement repository layer
 
 ### Iteration 3 - Services + AI + Scheduler (21 points)
 - [ ] (6) Implement market data service (Twelve Data)
@@ -254,6 +254,42 @@ and every check / unique / foreign-key / index named by the metadata
 naming convention. Constraint names are deterministic (driven by the
 convention bound on `Base.metadata`) so cross-database downgrades and
 diff-driven autogenerate runs produce stable output.
+
+### Repositories (Iteration 2.4 deliverable)
+
+Persistence access goes through repositories
+(`app/database/repository/`). Each ORM model has its own repository
+class with a narrow, named query surface — controllers depend on those
+named methods rather than building `select(...)` statements at the
+call site, so query churn stays contained when the schema evolves.
+
+| Repository | Notable methods |
+|---|---|
+| `BaseRepository[ModelT]` | `get`, `add`, `add_all`, `delete`, `delete_where`, `list`, `count`, `exists`, `flush` — generic primitives |
+| `PairRepository` | `get_by_symbol` (case-insensitive), `list_active`, `list_all`, `upsert_by_symbol` (idempotent seed) |
+| `SignalRepository` | `latest_for_pair`, `list_paginated` (with optional `selectinload(pair)`), `count_filtered`, `list_for_run`, `delete_expired` |
+| `AnalysisRunRepository` | `list_recent`, `list_paginated`, `count_filtered`, `get_latest_successful` |
+
+**Transaction boundaries are not the repository's concern.** Repos
+stage work on the session (`session.add`, `session.execute(...)`) but
+never commit and never roll back. The controller that owns the unit
+of work decides when to commit, which is what lets one controller
+batch multiple repository calls into a single atomic transaction.
+
+Repos are wired into FastAPI via dependencies in
+`app/dependencies.py`:
+
+```python
+from app.dependencies import PairRepositoryDep, SignalRepositoryDep
+
+@router.get("/pairs/{symbol}")
+async def get_pair(symbol: str, pairs: PairRepositoryDep):
+    return await pairs.get_by_symbol(symbol)
+```
+
+Each `*RepositoryDep` resolves the request-scoped session, so multiple
+repositories injected into the same handler share one session and
+participate in the same transaction.
 
 ## 🧪 Run
 ```bash
