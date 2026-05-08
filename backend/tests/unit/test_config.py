@@ -15,42 +15,94 @@ def _base_env(overrides: dict | None = None) -> dict:
     return env
 
 
+# ── Defaults ───────────────────────────────────────────────────────────────
+
+
 def test_defaults_are_applied():
     s = Settings(**_base_env(), _env_file=None)
     assert s.app_env == "development"
     assert s.app_port == 8000
     assert s.debug is False
     assert s.ai_provider == "groq"
+    assert s.market_data_provider == "twelve_data"
     assert s.analysis_interval_minutes == 15
     assert s.analysis_candle_count == 200
     assert s.analysis_timeframe == "1h"
+    assert s.active_pairs == ["XAUUSD", "GBPUSD", "EURUSD"]
+    assert s.cors_allowed_origins == ["http://localhost:3000"]
 
 
-def test_pairs_property_parses_comma_string():
+# ── active_pairs CSV parsing ───────────────────────────────────────────────
+
+
+def test_active_pairs_parses_comma_string():
     s = Settings(**_base_env({"active_pairs": "XAUUSD,GBPUSD,EURUSD"}), _env_file=None)
-    assert s.pairs == ["XAUUSD", "GBPUSD", "EURUSD"]
+    assert s.active_pairs == ["XAUUSD", "GBPUSD", "EURUSD"]
 
 
-def test_pairs_property_strips_whitespace():
+def test_active_pairs_strips_whitespace():
     s = Settings(**_base_env({"active_pairs": " XAUUSD , GBPUSD , EURUSD "}), _env_file=None)
-    assert s.pairs == ["XAUUSD", "GBPUSD", "EURUSD"]
+    assert s.active_pairs == ["XAUUSD", "GBPUSD", "EURUSD"]
 
 
-def test_pairs_property_ignores_empty_segments():
+def test_active_pairs_ignores_empty_segments():
     s = Settings(**_base_env({"active_pairs": "XAUUSD,,EURUSD,"}), _env_file=None)
-    assert s.pairs == ["XAUUSD", "EURUSD"]
+    assert s.active_pairs == ["XAUUSD", "EURUSD"]
+
+
+def test_active_pairs_uppercased():
+    s = Settings(**_base_env({"active_pairs": "xauusd,gbpusd"}), _env_file=None)
+    assert s.active_pairs == ["XAUUSD", "GBPUSD"]
+
+
+def test_active_pairs_empty_raises():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"active_pairs": ""}), _env_file=None)
+
+
+# ── cors_allowed_origins CSV parsing ───────────────────────────────────────
+
+
+def test_cors_origins_parses_csv():
+    s = Settings(
+        **_base_env({"cors_allowed_origins": "https://a.com,https://b.com"}),
+        _env_file=None,
+    )
+    assert s.cors_allowed_origins == ["https://a.com", "https://b.com"]
+
+
+def test_cors_origins_can_be_disabled():
+    s = Settings(**_base_env({"cors_allowed_origins": ""}), _env_file=None)
+    assert s.cors_allowed_origins == []
+
+
+# ── Environment helpers ────────────────────────────────────────────────────
 
 
 def test_is_development_true_for_development_env():
     s = Settings(**_base_env({"app_env": "development"}), _env_file=None)
     assert s.is_development is True
     assert s.is_production is False
+    assert s.is_test is False
 
 
 def test_is_production_true_for_production_env():
     s = Settings(**_base_env({"app_env": "production"}), _env_file=None)
     assert s.is_production is True
     assert s.is_development is False
+
+
+def test_is_test_true_for_test_env():
+    s = Settings(**_base_env({"app_env": "test"}), _env_file=None)
+    assert s.is_test is True
+
+
+def test_invalid_app_env_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"app_env": "prod"}), _env_file=None)
+
+
+# ── Required fields ────────────────────────────────────────────────────────
 
 
 def test_missing_database_url_raises():
@@ -73,11 +125,39 @@ def test_missing_ai_api_key_raises():
     assert "ai_api_key" in str(exc_info.value)
 
 
+# ── Type coercion and constraints ──────────────────────────────────────────
+
+
 def test_app_port_coerced_from_string():
     s = Settings(**_base_env({"app_port": "9000"}), _env_file=None)
     assert s.app_port == 9000
 
 
+def test_app_port_out_of_range_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"app_port": "70000"}), _env_file=None)
+
+
 def test_debug_coerced_from_string():
     s = Settings(**_base_env({"debug": "true"}), _env_file=None)
     assert s.debug is True
+
+
+def test_invalid_ai_provider_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"ai_provider": "openai"}), _env_file=None)
+
+
+def test_invalid_timeframe_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"analysis_timeframe": "2h"}), _env_file=None)
+
+
+def test_invalid_interval_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"analysis_interval_minutes": "0"}), _env_file=None)
+
+
+def test_invalid_candle_count_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"analysis_candle_count": "5"}), _env_file=None)

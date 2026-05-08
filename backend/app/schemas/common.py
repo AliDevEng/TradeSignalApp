@@ -1,10 +1,23 @@
-from fastapi import Query
-from pydantic import BaseModel
+"""Transport-agnostic response envelopes shared across all v1 endpoints.
+
+This module must NOT import FastAPI — schemas describe the wire format and
+should be reusable from non-HTTP contexts (background jobs, internal RPC,
+etc). Request-handling concerns (Query, Depends) live in `app.dependencies`.
+"""
+
+from __future__ import annotations
+
+from math import ceil
+from typing import Any
+
+from pydantic import BaseModel, Field, computed_field
 
 
 class ErrorDetail(BaseModel):
     code: str
     message: str
+    # Field-level validation issues, if any. Stays empty for non-validation errors.
+    fields: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class APIResponse[T](BaseModel):
@@ -18,26 +31,19 @@ class ErrorResponse(BaseModel):
 
 
 class PaginationMeta(BaseModel):
-    total: int
-    page: int
-    per_page: int
-    pages: int
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pages(self) -> int:
+        if self.total == 0:
+            return 0
+        return ceil(self.total / self.per_page)
 
 
 class PaginatedResponse[T](BaseModel):
     success: bool = True
     data: list[T]
     pagination: PaginationMeta
-
-
-class PaginationParams:
-    """Reusable FastAPI dependency for paginated list endpoints."""
-
-    def __init__(
-        self,
-        page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
-        per_page: int = Query(default=20, ge=1, le=100, description="Items per page"),
-    ) -> None:
-        self.page = page
-        self.per_page = per_page
-        self.offset = (page - 1) * per_page

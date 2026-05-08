@@ -2,27 +2,22 @@ import platform
 from datetime import UTC, datetime
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
-from app.config import get_settings
+from app import __version__
+from app.config import SettingsDep
+from app.schemas.health import ComponentStatus, HealthResponse, OverallState
 
 router = APIRouter(tags=["Health"])
 
-APP_VERSION = "0.1.0"
 
-
-class ComponentStatus(BaseModel):
-    status: str
-    detail: str | None = None
-
-
-class HealthResponse(BaseModel):
-    status: str
-    version: str
-    environment: str
-    timestamp: datetime
-    python_version: str
-    components: dict[str, ComponentStatus]
+def _derive_overall(components: dict[str, ComponentStatus]) -> OverallState:
+    """Worst-of aggregation; treats `not_configured` as benign (Iteration 1)."""
+    statuses = {c.status for c in components.values()}
+    if "down" in statuses:
+        return "down"
+    if "degraded" in statuses:
+        return "degraded"
+    return "ok"
 
 
 @router.get(
@@ -30,23 +25,16 @@ class HealthResponse(BaseModel):
     response_model=HealthResponse,
     summary="API liveness and component status",
 )
-async def health_check() -> HealthResponse:
-    settings = get_settings()
-
+async def health_check(settings: SettingsDep) -> HealthResponse:
+    # Components added in later iterations (DB pool, scheduler, AI provider, market data).
     components: dict[str, ComponentStatus] = {
         "database": ComponentStatus(status="not_configured"),
         "scheduler": ComponentStatus(status="not_configured"),
     }
 
-    overall = (
-        "ok"
-        if all(c.status in ("ok", "not_configured") for c in components.values())
-        else "degraded"
-    )
-
     return HealthResponse(
-        status=overall,
-        version=APP_VERSION,
+        status=_derive_overall(components),
+        version=__version__,
         environment=settings.app_env,
         timestamp=datetime.now(UTC),
         python_version=platform.python_version(),

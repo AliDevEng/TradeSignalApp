@@ -29,17 +29,16 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
-pip install fastapi==0.136.0 uvicorn[standard]==0.45.0 pydantic==2.13.3 pydantic-settings==2.14.0 sqlalchemy==2.0.49 alembic==1.18.4 apscheduler==3.11.2 asyncpg==0.31.0 httpx==0.28.1 python-dotenv==1.2.2 groq==1.2.0 anthropic==0.96.0 pandas==3.0.2 numpy==2.4.4 pandas-ta-classic==0.4.47
-pip install pytest==9.0.3 pytest-asyncio==1.3.0 ruff==0.15.11
+pip install -r requirements-dev.txt
 ```
 
 ## 🧩 Iterations and Points
 
-### Iteration 1 - Core API Skeleton (14 points)
-- [ ] (3) Scaffold `app/main.py`, `config.py`, router registration
-- [ ] (3) Add health endpoint
-- [ ] (4) Add settings and env loading
-- [ ] (4) Add base schemas and common response models
+### Iteration 1 - Core API Skeleton (14 points) ✅ DONE
+- [x] (3) Scaffold `app/main.py`, `config.py`, router registration
+- [x] (3) Add health endpoint
+- [x] (4) Add settings and env loading
+- [x] (4) Add base schemas and common response models
 
 ### Iteration 2 - Data Layer (20 points)
 - [ ] (5) Setup SQLAlchemy async engine/session
@@ -67,18 +66,121 @@ pip install pytest==9.0.3 pytest-asyncio==1.3.0 ruff==0.15.11
 
 **Total: 85 points** 🚀
 
+---
+
+## 🏗️ Architecture (Iteration 1 deliverable)
+
+```
+app/
+├── __init__.py               # Single source of truth: __version__
+├── main.py                   # create_app() factory + global exception handlers
+├── config.py                 # Settings (typed, validated, fail-fast)
+├── logging_config.py         # Centralised logging (dictConfig, idempotent)
+├── dependencies.py           # Cross-cutting FastAPI dependencies (Pagination, …)
+│
+├── schemas/                  # Wire-format Pydantic models — transport-agnostic
+│   ├── common.py             # APIResponse[T], ErrorResponse, PaginatedResponse[T]
+│   └── health.py             # HealthResponse, ComponentStatus (Literal states)
+│
+├── views/                    # FastAPI routers (V in MVC)
+│   ├── __init__.py           # api_v1_router — bundles all sub-routers under /api/v1
+│   ├── health.py             # GET /api/v1/health
+│   ├── signals.py            # placeholder (Iteration 4)
+│   ├── pairs.py              # placeholder (Iteration 4)
+│   └── analysis.py           # placeholder (Iteration 4)
+│
+├── controllers/              # Business logic (Iteration 4)
+├── models/                   # SQLAlchemy models (Iteration 2)
+├── database/                 # Engine, sessions, repositories (Iteration 2)
+├── services/                 # External integrations (Iteration 3)
+└── tasks/                    # APScheduler jobs (Iteration 3)
+```
+
+### Layering rules
+
+| Layer | May import | May NOT import |
+|---|---|---|
+| `schemas/` | `pydantic`, stdlib | `fastapi`, `sqlalchemy`, services |
+| `dependencies.py` | `fastapi`, schemas, config | controllers, services |
+| `views/` | dependencies, schemas, controllers | services directly, `database/` directly |
+| `controllers/` | services, repositories, schemas | `views/`, `fastapi` |
+| `services/` | stdlib, third-party SDKs, schemas | `views/`, controllers |
+
+This is what keeps the project deployable in pieces and testable without spinning up the framework.
+
+### Response envelopes
+
+All v1 responses follow a consistent shape so the frontend never has to special-case errors:
+
+```jsonc
+// Success
+{ "success": true, "data": <T> }
+
+// Paginated success
+{ "success": true, "data": [<T>], "pagination": { "total": 95, "page": 2, "per_page": 20, "pages": 5 } }
+
+// Error (incl. structured field errors for 422)
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "1 validation error(s)",
+    "fields": [{ "loc": ["query", "page"], "msg": "input must be >= 1", "type": "greater_than_equal" }]
+  }
+}
+```
+
+`/api/v1/health` is the only exception — it returns the health doc directly so external monitors can ingest it without unwrapping.
+
+### Configuration
+
+`Settings` is fail-fast: typo a value in `.env` and the process refuses to start.
+
+| Field | Type | Constraint |
+|---|---|---|
+| `app_env` | `Literal["development","staging","production","test"]` | rejects unknown values |
+| `app_port` | `int` | `1 ≤ port ≤ 65535` |
+| `ai_provider` | `Literal["groq","anthropic"]` | rejects unknown providers |
+| `analysis_timeframe` | `Literal["1m","5m","15m","30m","1h","4h","1d"]` | rejects unknown timeframes |
+| `analysis_interval_minutes` | `int` | `1 ≤ value ≤ 1440` |
+| `analysis_candle_count` | `int` | `20 ≤ value ≤ 5000` |
+| `active_pairs` | `list[str]` | CSV in env, normalised to upper-case, must be non-empty |
+| `cors_allowed_origins` | `list[str]` | CSV in env, empty disables CORS |
+
+### App factory
+
+`create_app(settings: Settings | None = None)` builds an isolated FastAPI instance. Tests get a fresh app per fixture, so they can flip env vars (e.g. `app_env="production"`) and verify behaviour without mutating module state.
+
 ## 🧪 Run
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+API docs in development:
+- Swagger UI: <http://localhost:8000/api/docs>
+- ReDoc: <http://localhost:8000/api/redoc>
+- OpenAPI JSON: <http://localhost:8000/api/openapi.json>
+
+(Disabled in production.)
+
+## 🧪 Tests + Lint
+```bash
+# Tests (50 covering config validation, schemas, dependencies, app behaviour)
+pytest
+
+# Lint + format
+ruff check .
+ruff format --check .
+```
+
 ## 🔐 Env
-Create `.env`:
+Copy `.env.example` to `.env` and fill in the values:
 ```env
 APP_ENV=development
 APP_HOST=0.0.0.0
 APP_PORT=8000
 DEBUG=true
+CORS_ALLOWED_ORIGINS=http://localhost:3000
 
 DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/tradesignal
 
