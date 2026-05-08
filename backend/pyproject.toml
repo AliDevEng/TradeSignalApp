@@ -59,7 +59,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S", "B"]  # relax security/bugbear checks inside tests
+"tests/**/*.py" = ["S", "B"]          # relax security/bugbear checks inside tests
+"app/config.py" = ["S104"]            # 0.0.0.0 is the correct default for a server host binding
 
 [tool.ruff.format]
 quote-style = "double"
