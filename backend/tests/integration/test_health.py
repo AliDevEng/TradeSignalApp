@@ -1,5 +1,7 @@
 from app import __version__
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+
+from tests._stubs import install_fake_database
 
 
 async def test_health_returns_200(client: AsyncClient):
@@ -29,6 +31,25 @@ async def test_health_components_have_status(client: AsyncClient):
     assert "scheduler" in components
     for component in components.values():
         assert "status" in component
+
+
+async def test_health_reports_database_ok_when_reachable(client: AsyncClient):
+    """The default fake Database returns healthy=True, so the probe must
+    surface that as an `ok` component status."""
+    data = (await client.get("/api/v1/health")).json()
+    assert data["components"]["database"]["status"] == "ok"
+
+
+async def test_health_reports_database_down_when_probe_fails(app):
+    """A failing healthcheck must downgrade the component to `down` and
+    propagate that to the overall status."""
+    install_fake_database(app, healthy=False)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        data = (await ac.get("/api/v1/health")).json()
+    assert data["components"]["database"]["status"] == "down"
+    assert data["components"]["database"]["detail"] == "Database unreachable"
+    assert data["status"] == "down"
 
 
 async def test_health_environment_is_development(client: AsyncClient):

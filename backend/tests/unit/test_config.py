@@ -161,3 +161,40 @@ def test_invalid_interval_rejected():
 def test_invalid_candle_count_rejected():
     with pytest.raises(ValidationError):
         Settings(**_base_env({"analysis_candle_count": "5"}), _env_file=None)
+
+
+# ── Database pool settings ─────────────────────────────────────────────────
+
+
+def test_database_pool_defaults():
+    s = Settings(**_base_env(), _env_file=None)
+    assert s.database_pool_size == 10
+    assert s.database_max_overflow == 20
+    assert s.database_pool_recycle_seconds == 1800
+    assert s.database_echo is False
+
+
+def test_database_pool_size_coerced_from_string():
+    s = Settings(**_base_env({"database_pool_size": "25"}), _env_file=None)
+    assert s.database_pool_size == 25
+
+
+def test_database_pool_size_zero_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"database_pool_size": "0"}), _env_file=None)
+
+
+def test_database_max_overflow_zero_allowed():
+    """Zero is a valid value — it disables overflow but is still legal."""
+    s = Settings(**_base_env({"database_max_overflow": "0"}), _env_file=None)
+    assert s.database_max_overflow == 0
+
+
+def test_database_pool_recycle_below_minimum_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"database_pool_recycle_seconds": "10"}), _env_file=None)
+
+
+def test_database_echo_coerced_from_string():
+    s = Settings(**_base_env({"database_echo": "true"}), _env_file=None)
+    assert s.database_echo is True

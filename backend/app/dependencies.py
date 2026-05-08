@@ -1,15 +1,23 @@
 """Cross-cutting FastAPI dependencies.
 
 Kept separate from `schemas/` so the schemas layer stays transport-agnostic.
-Future iterations add a database session dependency here as well.
+This is also the only file in the project allowed to bridge `database/`
+into FastAPI's dependency-injection system — everything else just
+consumes `DatabaseDep` / `DBSessionDep`.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, Query
+from fastapi import Depends, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import Database
+
+# ── Pagination ─────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,3 +42,34 @@ def pagination_params(
 
 
 PaginationDep = Annotated[Pagination, Depends(pagination_params)]
+
+
+# ── Database ───────────────────────────────────────────────────────────────
+
+
+def get_database(request: Request) -> Database:
+    """Pull the singleton `Database` off `app.state`.
+
+    `create_app()` constructs the instance once and stashes it on app state,
+    so handlers and other dependencies can resolve it without importing
+    module-level globals (which makes test isolation hard).
+    """
+    return request.app.state.database
+
+
+DatabaseDep = Annotated[Database, Depends(get_database)]
+
+
+async def get_db_session(database: DatabaseDep) -> AsyncIterator[AsyncSession]:
+    """Yield a per-request `AsyncSession` with rollback-on-exception semantics.
+
+    The session is closed automatically on request completion. Commits are
+    explicit — controllers decide when a unit of work is complete. This
+    keeps transaction boundaries visible at the call site instead of
+    hiding them behind an implicit "commit on 2xx" middleware.
+    """
+    async with database.session() as session:
+        yield session
+
+
+DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]

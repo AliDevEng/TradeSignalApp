@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.config import Settings, get_settings
+from app.database import Database
 from app.logging_config import configure_logging
 from app.schemas.common import ErrorDetail, ErrorResponse
 from app.views import api_v1_router
@@ -26,9 +27,21 @@ from app.views import api_v1_router
 logger = logging.getLogger(__name__)
 
 
+def _build_database(settings: Settings) -> Database:
+    return Database(
+        url=settings.database_url,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_recycle_seconds=settings.database_pool_recycle_seconds,
+        pool_pre_ping=True,
+        echo=settings.database_echo,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
+    database: Database = app.state.database
     logger.info(
         "Starting TradeSignal AI v%s | env=%s | ai_provider=%s | pairs=%s",
         __version__,
@@ -36,9 +49,13 @@ async def lifespan(app: FastAPI):
         settings.ai_provider,
         ",".join(settings.active_pairs),
     )
-    # DB pool, scheduler, AI providers wire in during later iterations.
-    yield
-    logger.info("Shutting down TradeSignal AI")
+    # Scheduler + AI providers wire in during later iterations.
+    try:
+        yield
+    finally:
+        logger.info("Disposing database engine")
+        await database.dispose()
+        logger.info("Shutting down TradeSignal AI")
 
 
 def _error_response(
@@ -107,7 +124,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     # Stash on state so handlers/lifespan don't reach into module globals.
+    # The engine is constructed eagerly but does NOT open connections —
+    # asyncpg connects lazily on the first query. This keeps `create_app`
+    # synchronous (tests can build apps without an event loop) while still
+    # giving us a single, disposable Database for the app's lifetime.
     app.state.settings = settings
+    app.state.database = _build_database(settings)
 
     if settings.cors_allowed_origins:
         app.add_middleware(

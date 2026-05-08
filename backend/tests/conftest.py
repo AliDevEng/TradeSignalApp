@@ -3,6 +3,12 @@
 The HTTP client is wired via ASGITransport so tests do not need a running
 uvicorn process. Each test session gets a freshly built FastAPI app via
 `create_app()` so test isolation is preserved when settings change.
+
+Every test app gets its real `Database` swapped for a `FakeDatabase` —
+`create_app()` constructs the engine eagerly (sync) but never opens a
+connection until something runs SQL, and we don't want tests to ever
+reach a live Postgres. Tests that want to simulate DB failure should use
+`install_fake_database(app, healthy=False)` directly.
 """
 
 from collections.abc import AsyncIterator
@@ -11,6 +17,8 @@ import pytest
 from app.config import get_settings
 from app.main import create_app
 from httpx import ASGITransport, AsyncClient
+
+from tests._stubs import install_fake_database
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +31,9 @@ def clear_settings_cache():
 
 @pytest.fixture
 def app():
-    return create_app()
+    application = create_app()
+    install_fake_database(application)
+    return application
 
 
 @pytest.fixture

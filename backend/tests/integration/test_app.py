@@ -4,6 +4,15 @@ from app.config import Settings
 from app.main import create_app
 from httpx import ASGITransport, AsyncClient
 
+from tests._stubs import install_fake_database
+
+
+def _build_app(settings: Settings):
+    """Same wiring the `app` fixture does — used by tests that need custom settings."""
+    app = create_app(settings)
+    install_fake_database(app)
+    return app
+
 
 async def test_validation_error_returns_structured_fields(client: AsyncClient):
     """A dummy endpoint relying on Query validation isn't exposed yet, so we
@@ -30,7 +39,7 @@ async def test_cors_disabled_when_origins_empty(monkeypatch):
         cors_allowed_origins=[],
         _env_file=None,
     )
-    app = create_app(settings)
+    app = _build_app(settings)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         response = await ac.options(
@@ -52,7 +61,7 @@ async def test_cors_enabled_when_origin_configured():
         cors_allowed_origins=["http://example.com"],
         _env_file=None,
     )
-    app = create_app(settings)
+    app = _build_app(settings)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         response = await ac.get(
@@ -70,7 +79,7 @@ async def test_docs_disabled_in_production():
         app_env="production",
         _env_file=None,
     )
-    app = create_app(settings)
+    app = _build_app(settings)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         docs = await ac.get("/api/docs")

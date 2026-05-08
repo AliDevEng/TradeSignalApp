@@ -41,7 +41,7 @@ pip install -r requirements-dev.txt
 - [x] (4) Add base schemas and common response models
 
 ### Iteration 2 - Data Layer (20 points)
-- [ ] (5) Setup SQLAlchemy async engine/session
+- [x] (5) Setup SQLAlchemy async engine/session
 - [ ] (5) Add models (`pair`, `signal`, `analysis_run`)
 - [ ] (5) Setup Alembic and first migration
 - [ ] (5) Implement repository layer
@@ -146,10 +146,34 @@ All v1 responses follow a consistent shape so the frontend never has to special-
 | `analysis_candle_count` | `int` | `20 ≤ value ≤ 5000` |
 | `active_pairs` | `list[str]` | CSV in env, normalised to upper-case, must be non-empty |
 | `cors_allowed_origins` | `list[str]` | CSV in env, empty disables CORS |
+| `database_pool_size` | `int` | `1 ≤ value ≤ 200` (default 10) |
+| `database_max_overflow` | `int` | `0 ≤ value ≤ 500` (default 20) |
+| `database_pool_recycle_seconds` | `int` | `60 ≤ value ≤ 86400` (default 1800) |
+| `database_echo` | `bool` | log every SQL statement — dev only |
 
 ### App factory
 
 `create_app(settings: Settings | None = None)` builds an isolated FastAPI instance. Tests get a fresh app per fixture, so they can flip env vars (e.g. `app_env="production"`) and verify behaviour without mutating module state.
+
+### Database (Iteration 2.1 deliverable)
+
+The async SQLAlchemy engine and session factory live behind a single `Database` adapter (`app/database/connection.py`). It is constructed once by `create_app()` (sync — engine creation only allocates a pool, no connections are opened) and disposed during the FastAPI lifespan shutdown.
+
+Pulling sessions:
+
+```python
+from app.dependencies import DBSessionDep   # AsyncSession
+
+@router.get("/example")
+async def handler(session: DBSessionDep) -> ...:
+    # rollback on exception is handled by the dependency
+    # commits are explicit — controllers own transaction boundaries
+    ...
+```
+
+The health endpoint round-trips a `SELECT 1` to surface DB reachability:
+- `database.status == "ok"` → pool reachable
+- `database.status == "down"` → connect/select failed → overall status downgrades to `down`
 
 ## 🧪 Run
 ```bash
@@ -165,7 +189,8 @@ API docs in development:
 
 ## 🧪 Tests + Lint
 ```bash
-# Tests (50 covering config validation, schemas, dependencies, app behaviour)
+# Tests cover config validation, schemas, dependencies, the Database adapter,
+# health DB-probe behaviour, and end-to-end app wiring.
 pytest
 
 # Lint + format
@@ -183,6 +208,10 @@ DEBUG=true
 CORS_ALLOWED_ORIGINS=http://localhost:3000
 
 DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/tradesignal
+# DATABASE_POOL_SIZE=10
+# DATABASE_MAX_OVERFLOW=20
+# DATABASE_POOL_RECYCLE_SECONDS=1800
+# DATABASE_ECHO=false
 
 AI_PROVIDER=groq
 AI_MODEL=llama-3.3-70b-versatile

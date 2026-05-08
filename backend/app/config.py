@@ -34,7 +34,18 @@ class Settings(BaseSettings):
     )
 
     # ── Database ───────────────────────────────────────────────────────────
+    # Pool sizing is exposed so it can be tuned per environment without code
+    # changes. Defaults target a single backend instance hitting Postgres on
+    # the same network — bump pool_size + max_overflow for higher concurrency.
     database_url: str
+    database_pool_size: int = Field(default=10, ge=1, le=200)
+    database_max_overflow: int = Field(default=20, ge=0, le=500)
+    # Recycle connections older than this to dodge silently-dropped sockets
+    # (NAT timeouts, PG idle_in_transaction_session_timeout, …).
+    database_pool_recycle_seconds: int = Field(default=1800, ge=60, le=86400)
+    # SQLAlchemy will emit every SQL statement at INFO level when True.
+    # Useful for local debugging; never enable in production.
+    database_echo: bool = False
 
     # ── AI Provider ────────────────────────────────────────────────────────
     ai_provider: AIProvider = "groq"
