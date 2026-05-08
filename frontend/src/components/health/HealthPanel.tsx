@@ -1,14 +1,20 @@
 "use client";
 
+import { Badge } from "@/components/ui/Badge";
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { useHealthQuery } from "@/hooks/useHealthQuery";
 import { ApiClientError } from "@/services/api";
 import type { ComponentState } from "@/types/health";
 
+type HealthPanelProps = {
+  compact?: boolean;
+};
+
 const statusStyles: Record<ComponentState, string> = {
-  ok: "bg-[#e5f6ef] text-[#116149] border-[#bfe6d6]",
-  degraded: "bg-[#fff7ed] text-[#9a3412] border-[#fed7aa]",
-  down: "bg-[#fff1f2] text-[#be123c] border-[#fecdd3]",
-  not_configured: "bg-[#f3f4f6] text-[#4b5563] border-[#d1d5db]"
+  ok: "bg-[var(--blue-soft)] text-[var(--blue-strong)] border-[#234f86]",
+  degraded: "bg-[var(--gold-soft)] text-[var(--gold-strong)] border-[#6f5620]",
+  down: "bg-[var(--red-soft)] text-[var(--red-strong)] border-[#6e2029]",
+  not_configured: "bg-[#141b27] text-[#cbd5e1] border-[#344053]"
 };
 
 function formatError(error: Error): string {
@@ -19,20 +25,20 @@ function formatError(error: Error): string {
   return error.message;
 }
 
-export function HealthPanel() {
+export function HealthPanel({ compact = false }: HealthPanelProps) {
   const { data, error, isLoading, isFetching } = useHealthQuery();
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-[var(--panel-border)] bg-[#fafbf7] p-5 text-sm text-[var(--muted)]">
-        Checking backend status...
+      <div className="rounded-lg border border-[var(--panel-border)] bg-[#0d131c] p-5">
+        <LoadingSpinner label="Checking backend status" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-[#fecdd3] bg-[#fff1f2] p-5 text-sm text-[#be123c]">
+      <div className="rounded-lg border border-[#6e2029] bg-[var(--red-soft)] p-5 text-sm text-[var(--red-strong)]">
         {formatError(error)}
       </div>
     );
@@ -40,36 +46,40 @@ export function HealthPanel() {
 
   if (!data) {
     return (
-      <div className="rounded-lg border border-[var(--panel-border)] bg-[#fafbf7] p-5 text-sm text-[var(--muted)]">
+      <div className="rounded-lg border border-[var(--panel-border)] bg-[#0d131c] p-5 text-sm text-[var(--muted)]">
         No health data returned.
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className={compact ? "space-y-3" : "space-y-4"}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm text-[var(--muted)]">Overall status</p>
-          <p className="mt-1 text-2xl font-semibold capitalize">{data.status}</p>
+          <p
+            className={
+              compact
+                ? "mt-1 text-xl font-semibold capitalize text-[#fff8df]"
+                : "mt-1 text-2xl font-semibold capitalize text-[#fff8df]"
+            }
+          >
+            {data.status}
+          </p>
         </div>
-        <span
-          className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${statusStyles[data.status]}`}
-        >
+        <Badge className={statusStyles[data.status]}>
           {isFetching ? "Refreshing" : data.environment}
-        </span>
+        </Badge>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={compact ? "grid gap-2" : "grid gap-3 sm:grid-cols-2"}>
         {Object.entries(data.components).map(([name, component]) => (
-          <div className="rounded-lg border border-[var(--panel-border)] p-4" key={name}>
+          <div className="rounded-lg border border-[var(--panel-border)] bg-[#0d131c] p-4" key={name}>
             <div className="flex items-center justify-between gap-3">
-              <p className="font-medium capitalize">{name.replaceAll("_", " ")}</p>
-              <span
-                className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${statusStyles[component.status]}`}
-              >
+              <p className="font-medium capitalize text-[#fff8df]">{name.replaceAll("_", " ")}</p>
+              <Badge className={`max-w-[132px] justify-center text-center ${statusStyles[component.status]}`}>
                 {component.status.replaceAll("_", " ")}
-              </span>
+              </Badge>
             </div>
             {component.detail ? (
               <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{component.detail}</p>
@@ -78,8 +88,8 @@ export function HealthPanel() {
         ))}
       </div>
 
-      <p className="text-xs text-[var(--muted)]">
-        API {data.version} · Python {data.python_version} ·{" "}
+      <p className="text-xs leading-5 text-[var(--muted)]">
+        API {data.version} | Python {data.python_version} |{" "}
         {new Intl.DateTimeFormat("en", {
           dateStyle: "medium",
           timeStyle: "short"
