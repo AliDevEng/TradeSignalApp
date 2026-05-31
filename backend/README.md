@@ -55,7 +55,7 @@ pip install -r requirements-dev.txt
 
 ### Iteration 4 - Business Logic + API Endpoints (18 points)
 - [x] (6) Implement analysis controller
-- [ ] (5) Implement signal controller
+- [x] (5) Implement signal controller
 - [ ] (4) Implement signals/pairs/analysis routers
 - [ ] (3) Add validation and error-handling strategy
 
@@ -409,6 +409,31 @@ cycle" analysis, not a signal, and the `signals` table enforces
 has a single `take_profit` column, only **TP1** is persisted; surfacing
 TP1/TP2/TP3 is a deliberate schema-change follow-up rather than silent data
 loss.
+
+### Signal controller (Iteration 4.2 deliverable)
+
+The `SignalController` (`app/controllers/signal_controller.py`) is the read-side
+counterpart: it serves the signal queries the frontend paginates over
+(`list_signals`, `get_signal`, `list_latest_for_pair`, `list_for_run`). Two
+deliberate contrasts with the analysis controller make the layering legible:
+
+- **Request-scoped, not session-owning.** A read lives entirely inside one HTTP
+  request, so the controller takes already-constructed, session-sharing
+  repositories (composed in `app/dependencies.py` as `SignalControllerDep`) and
+  borrows the request transaction — it does *not* take the `Database` adapter.
+  The analysis controller owns sessions precisely because it has no request.
+- **It returns wire schemas, not ORM rows.** The ORM `Signal` is mapped to
+  `schemas.signal.SignalResponse` **inside the open session**, so reading the
+  eagerly-loaded `pair` (the relationship is `lazy="joined"`) is free and never
+  risks a lazy load against a closed session. The view layer therefore touches
+  no ORM objects.
+
+Supporting types, both transport-agnostic so the view owns the HTTP mapping:
+`controllers.results.Page[T]` (a page slice + total count, no presentation
+concerns) and `controllers.exceptions.ResourceNotFoundError` (raised when a
+signal id or pair symbol doesn't resolve — Iteration 4.4 maps it to a 404 in one
+place). Money fields cross the wire as JSON **strings** (`Decimal`), keeping the
+"never float for prices" discipline all the way out to the client.
 
 ## 🧪 Run
 ```bash

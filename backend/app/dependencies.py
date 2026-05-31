@@ -15,7 +15,7 @@ from typing import Annotated
 from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.controllers import AnalysisController
+from app.controllers import AnalysisController, SignalController
 from app.database import Database
 from app.database.repository import (
     AnalysisRunRepository,
@@ -111,6 +111,24 @@ def get_analysis_run_repository(session: DBSessionDep) -> AnalysisRunRepository:
 
 
 AnalysisRunRepositoryDep = Annotated[AnalysisRunRepository, Depends(get_analysis_run_repository)]
+
+
+# ── Request-scoped controllers ───────────────────────────────────────────────
+#
+# Read controllers are composed from the repository dependencies, so they share
+# the request's session and transaction. (The write-side AnalysisController is
+# different — it owns its own sessions and is constructed once in the lifespan;
+# it is resolved off app state further down.)
+
+
+def get_signal_controller(
+    signals: SignalRepositoryDep,
+    pairs: PairRepositoryDep,
+) -> SignalController:
+    return SignalController(signals=signals, pairs=pairs)
+
+
+SignalControllerDep = Annotated[SignalController, Depends(get_signal_controller)]
 
 
 # ── Iteration-3 services (resolved off app state) ────────────────────────────
