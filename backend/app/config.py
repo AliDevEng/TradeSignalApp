@@ -51,15 +51,37 @@ class Settings(BaseSettings):
     ai_provider: AIProvider = "groq"
     ai_model: str = "llama-3.3-70b-versatile"
     ai_api_key: str
+    # Low temperature: signal generation should be near-deterministic. A high
+    # temperature makes back-tests irreproducible and confidence scores noisy.
+    ai_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    ai_max_tokens: int = Field(default=1024, ge=256, le=8192)
+    # Per-request budget. A hung provider must never stall an analysis cycle
+    # past this; the cycle records the failure and moves on.
+    ai_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
 
     # ── Market Data ────────────────────────────────────────────────────────
     market_data_provider: MarketDataProvider = "twelve_data"
     twelve_data_api_key: str
+    twelve_data_base_url: str = "https://api.twelvedata.com"
+    market_data_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
+    # Transient failures (timeouts, 5xx, rate limits) are retried with
+    # exponential backoff up to this many additional attempts.
+    market_data_max_retries: int = Field(default=3, ge=0, le=10)
 
     # ── Analysis schedule ──────────────────────────────────────────────────
     analysis_interval_minutes: int = Field(default=15, ge=1, le=1440)
     analysis_candle_count: int = Field(default=200, ge=20, le=5000)
     analysis_timeframe: Timeframe = "1h"
+
+    # ── Scheduler ──────────────────────────────────────────────────────────
+    # Disable on API-only replicas so the analysis job runs on exactly one
+    # instance in a horizontally-scaled deployment (running it everywhere
+    # would generate duplicate signals and multiply provider cost).
+    scheduler_enabled: bool = True
+    scheduler_timezone: str = "UTC"
+    # How late a missed run may fire before it is skipped — guards against a
+    # backlog of catch-up runs after a pause (deploy, suspend, clock skew).
+    scheduler_misfire_grace_seconds: int = Field(default=60, ge=1, le=3600)
 
     # Comma-separated in .env (ACTIVE_PAIRS=XAUUSD,GBPUSD,EURUSD).
     # The validator normalises to list[str] so the rest of the codebase has a

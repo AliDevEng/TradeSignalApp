@@ -198,3 +198,58 @@ def test_database_pool_recycle_below_minimum_rejected():
 def test_database_echo_coerced_from_string():
     s = Settings(**_base_env({"database_echo": "true"}), _env_file=None)
     assert s.database_echo is True
+
+
+# ── Iteration 3: AI / market-data / scheduler knobs ─────────────────────────
+
+
+def test_iteration3_defaults():
+    s = Settings(**_base_env(), _env_file=None)
+    # AI
+    assert s.ai_temperature == 0.2
+    assert s.ai_max_tokens == 1024
+    assert s.ai_timeout_seconds == 30.0
+    # Market data
+    assert s.twelve_data_base_url == "https://api.twelvedata.com"
+    assert s.market_data_timeout_seconds == 15.0
+    assert s.market_data_max_retries == 3
+    # Scheduler
+    assert s.scheduler_enabled is True
+    assert s.scheduler_timezone == "UTC"
+    assert s.scheduler_misfire_grace_seconds == 60
+
+
+def test_ai_temperature_out_of_range_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"ai_temperature": "2.5"}), _env_file=None)
+
+
+def test_ai_max_tokens_below_minimum_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"ai_max_tokens": "100"}), _env_file=None)
+
+
+def test_ai_timeout_must_be_positive():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"ai_timeout_seconds": "0"}), _env_file=None)
+
+
+def test_market_data_max_retries_negative_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"market_data_max_retries": "-1"}), _env_file=None)
+
+
+def test_market_data_max_retries_zero_allowed():
+    """Zero disables retries — a legal (if aggressive) choice."""
+    s = Settings(**_base_env({"market_data_max_retries": "0"}), _env_file=None)
+    assert s.market_data_max_retries == 0
+
+
+def test_scheduler_enabled_coerced_from_string():
+    s = Settings(**_base_env({"scheduler_enabled": "false"}), _env_file=None)
+    assert s.scheduler_enabled is False
+
+
+def test_scheduler_misfire_grace_below_minimum_rejected():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"scheduler_misfire_grace_seconds": "0"}), _env_file=None)

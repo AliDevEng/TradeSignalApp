@@ -21,6 +21,9 @@ from app.database.repository import (
     PairRepository,
     SignalRepository,
 )
+from app.services.ai import AIProvider
+from app.services.market_data import MarketDataProvider
+from app.tasks import Scheduler
 
 # ── Pagination ─────────────────────────────────────────────────────────────
 
@@ -107,3 +110,43 @@ def get_analysis_run_repository(session: DBSessionDep) -> AnalysisRunRepository:
 
 
 AnalysisRunRepositoryDep = Annotated[AnalysisRunRepository, Depends(get_analysis_run_repository)]
+
+
+# ── Iteration-3 services (resolved off app state) ────────────────────────────
+#
+# These are constructed once during the lifespan startup and live on
+# `app.state`. The accessors fail fast with a clear message if resolved before
+# startup (e.g. a handler hit on an app built without entering the lifespan)
+# rather than surfacing a bare AttributeError deep in a stack trace.
+
+
+def _require_state(request: Request, attr: str, label: str) -> object:
+    value = getattr(request.app.state, attr, None)
+    if value is None:
+        raise RuntimeError(
+            f"{label} is not initialised — it is created during application "
+            "startup (lifespan). This dependency cannot be used outside a "
+            "running app."
+        )
+    return value
+
+
+def get_market_data_provider(request: Request) -> MarketDataProvider:
+    return _require_state(request, "market_data_provider", "Market data provider")  # type: ignore[return-value]
+
+
+MarketDataProviderDep = Annotated[MarketDataProvider, Depends(get_market_data_provider)]
+
+
+def get_ai_provider(request: Request) -> AIProvider:
+    return _require_state(request, "ai_provider", "AI provider")  # type: ignore[return-value]
+
+
+AIProviderDep = Annotated[AIProvider, Depends(get_ai_provider)]
+
+
+def get_scheduler(request: Request) -> Scheduler:
+    return _require_state(request, "scheduler", "Scheduler")  # type: ignore[return-value]
+
+
+SchedulerDep = Annotated[Scheduler, Depends(get_scheduler)]

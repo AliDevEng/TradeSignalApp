@@ -57,6 +57,23 @@ async def test_health_environment_is_development(client: AsyncClient):
     assert data["environment"] == "development"
 
 
+async def test_health_reports_iteration3_components(client: AsyncClient):
+    components = (await client.get("/api/v1/health")).json()["components"]
+    for key in ("scheduler", "market_data", "ai_provider"):
+        assert key in components
+        assert "status" in components[key]
+
+
+async def test_health_components_not_configured_without_lifespan(client: AsyncClient):
+    """The test client builds the app without entering the lifespan, so the
+    scheduler and external providers are absent. They must report the benign
+    `not_configured` state, keeping overall status `ok`."""
+    data = (await client.get("/api/v1/health")).json()
+    for key in ("scheduler", "market_data", "ai_provider"):
+        assert data["components"][key]["status"] == "not_configured"
+    assert data["status"] == "ok"
+
+
 async def test_unknown_route_returns_404_error_shape(client: AsyncClient):
     response = await client.get("/api/v1/does-not-exist")
     assert response.status_code == 404

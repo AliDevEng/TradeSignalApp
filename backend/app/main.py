@@ -22,9 +22,16 @@ from app.config import Settings, get_settings
 from app.database import Database
 from app.logging_config import configure_logging
 from app.schemas.common import ErrorDetail, ErrorResponse
+from app.services.ai import AIProvider, build_ai_provider
+from app.services.market_data import MarketDataProvider, build_market_data_provider
+from app.tasks import AnalysisJob, Scheduler, pipeline_not_configured
 from app.views import api_v1_router
 
 logger = logging.getLogger(__name__)
+
+#: Stable scheduler job id — kept as a constant so health checks / future
+#: admin endpoints can reference the same job without string drift.
+ANALYSIS_JOB_ID = "analysis-cycle"
 
 
 def _build_database(settings: Settings) -> Database:
@@ -49,10 +56,42 @@ async def lifespan(app: FastAPI):
         settings.ai_provider,
         ",".join(settings.active_pairs),
     )
-    # Scheduler + AI providers wire in during later iterations.
+
+    # External clients live for the serving lifetime — constructed here (not in
+    # create_app) so that lightweight unit tests, which build an app without
+    # entering the lifespan, never spin up real SDK/HTTP clients.
+    market_data: MarketDataProvider = build_market_data_provider(settings)
+    ai_provider: AIProvider = build_ai_provider(settings)
+    scheduler = Scheduler(
+        timezone=settings.scheduler_timezone,
+        misfire_grace_seconds=settings.scheduler_misfire_grace_seconds,
+    )
+    app.state.market_data_provider = market_data
+    app.state.ai_provider = ai_provider
+    app.state.scheduler = scheduler
+
+    # Register the analysis cadence. The pipeline body is a placeholder until
+    # the Iteration-4 controller is wired; the schedule itself is real.
+    job = AnalysisJob(pipeline_not_configured)
+    scheduler.add_interval_job(
+        job.run,
+        minutes=settings.analysis_interval_minutes,
+        job_id=ANALYSIS_JOB_ID,
+        name="Scheduled market analysis",
+    )
+    if settings.scheduler_enabled:
+        scheduler.start()
+    else:
+        logger.info("Scheduler disabled by configuration (scheduler_enabled=false)")
+
     try:
         yield
     finally:
+        # Reverse order of acquisition; each step guarded so one failure does
+        # not abort the rest of the teardown.
+        scheduler.shutdown(wait=False)
+        await ai_provider.aclose()
+        await market_data.aclose()
         logger.info("Disposing database engine")
         await database.dispose()
         logger.info("Shutting down TradeSignal AI")

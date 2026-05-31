@@ -9,6 +9,7 @@ Build a scalable **FastAPI backend** with scheduler, indicator pipeline, AI prov
 - `pydantic`: `2.13.3`
 - `pydantic-settings`: `2.14.0`
 - `sqlalchemy`: `2.0.49`
+- `greenlet`: `3.3.0` (required by SQLAlchemy's async extension — pinned explicitly rather than relied on transitively)
 - `alembic`: `1.18.4`
 - `apscheduler`: `3.11.2`
 - `asyncpg`: `0.31.0`
@@ -40,17 +41,17 @@ pip install -r requirements-dev.txt
 - [x] (4) Add settings and env loading
 - [x] (4) Add base schemas and common response models
 
-### Iteration 2 - Data Layer (20 points)
+### Iteration 2 - Data Layer (20 points) ✅ DONE
 - [x] (5) Setup SQLAlchemy async engine/session
 - [x] (5) Add models (`pair`, `signal`, `analysis_run`)
 - [x] (5) Setup Alembic and first migration
 - [x] (5) Implement repository layer
 
-### Iteration 3 - Services + AI + Scheduler (21 points)
-- [ ] (6) Implement market data service (Twelve Data)
-- [ ] (5) Implement indicators calculator
-- [ ] (5) Implement AI provider pattern (`groq` + `anthropic`)
-- [ ] (5) Add APScheduler job and startup wiring
+### Iteration 3 - Services + AI + Scheduler (21 points) ✅ DONE
+- [x] (6) Implement market data service (Twelve Data)
+- [x] (5) Implement indicators calculator
+- [x] (5) Implement AI provider pattern (`groq` + `anthropic`)
+- [x] (5) Add APScheduler job and startup wiring
 
 ### Iteration 4 - Business Logic + API Endpoints (18 points)
 - [ ] (6) Implement analysis controller
@@ -92,8 +93,16 @@ app/
 ├── controllers/              # Business logic (Iteration 4)
 ├── models/                   # SQLAlchemy models (Iteration 2)
 ├── database/                 # Engine, sessions, repositories (Iteration 2)
-├── services/                 # External integrations (Iteration 3)
-└── tasks/                    # APScheduler jobs (Iteration 3)
+│
+├── services/                 # External integrations + pure computation (Iteration 3)
+│   ├── __init__.py           # ServiceError — single base for all service failures
+│   ├── market_data/          # Candle value object, MarketDataProvider ABC, TwelveDataProvider, factory
+│   ├── indicators/           # IndicatorCalculator (pure) → IndicatorSnapshot
+│   └── ai/                   # AIProvider template + GroqProvider/AnthropicProvider, SignalDraft, factory
+│
+└── tasks/                    # Background scheduling (Iteration 3)
+    ├── scheduler.py          # Scheduler adapter over APScheduler AsyncIOScheduler
+    └── analysis_job.py       # AnalysisJob (error-isolating wrapper) + placeholder pipeline
 ```
 
 ### Layering rules
@@ -150,6 +159,15 @@ All v1 responses follow a consistent shape so the frontend never has to special-
 | `database_max_overflow` | `int` | `0 ≤ value ≤ 500` (default 20) |
 | `database_pool_recycle_seconds` | `int` | `60 ≤ value ≤ 86400` (default 1800) |
 | `database_echo` | `bool` | log every SQL statement — dev only |
+| `ai_temperature` | `float` | `0.0 ≤ value ≤ 2.0` (default 0.2 — near-deterministic) |
+| `ai_max_tokens` | `int` | `256 ≤ value ≤ 8192` (default 1024) |
+| `ai_timeout_seconds` | `float` | `0 < value ≤ 300` (default 30) |
+| `twelve_data_base_url` | `str` | default `https://api.twelvedata.com` |
+| `market_data_timeout_seconds` | `float` | `0 < value ≤ 120` (default 15) |
+| `market_data_max_retries` | `int` | `0 ≤ value ≤ 10` (default 3) |
+| `scheduler_enabled` | `bool` | run the analysis job on this instance (default true) |
+| `scheduler_timezone` | `str` | default `UTC` |
+| `scheduler_misfire_grace_seconds` | `int` | `1 ≤ value ≤ 3600` (default 60) |
 
 ### App factory
 
@@ -291,6 +309,65 @@ Each `*RepositoryDep` resolves the request-scoped session, so multiple
 repositories injected into the same handler share one session and
 participate in the same transaction.
 
+### Services + scheduler (Iteration 3 deliverable)
+
+Iteration 3 builds the *analysis pipeline ingredients* — fetch data, compute
+indicators, ask an AI — and the scheduler that will drive them. The
+orchestration that strings them together (and persists signals) is the
+analysis controller in Iteration 4; the service layer here deliberately knows
+nothing about the database or FastAPI.
+
+Every service failure derives from a single base, `ServiceError`
+(`app/services/__init__.py`), so the future controller can catch one type and
+record a failed `AnalysisRun` without importing `httpx`/`groq`/`anthropic`
+exception types.
+
+**Market data** (`app/services/market_data/`). A `Candle` value object
+(immutable, `Decimal` OHLC, self-validating so a corrupt bar can't poison the
+indicators) is the single shape the pipeline speaks. `MarketDataProvider` is
+the ABC; `TwelveDataProvider` is the concrete adapter that hides Twelve Data's
+quirks — symbol mapping (`EURUSD → EUR/USD`), interval mapping (`1h → 1h`,
+`1d → 1day`), errors-in-HTTP-200 bodies, and newest-first ordering. Transient
+failures (timeouts, 5xx, 429) retry with exponential backoff; deterministic
+ones (unknown symbol, malformed payload) raise immediately so the rate-limit
+budget isn't wasted. `build_market_data_provider(settings)` is the factory.
+
+**Indicators** (`app/services/indicators/`). `IndicatorCalculator.compute()` is
+**pure** — candles in, an `IndicatorSnapshot` out, no IO. It reports numbers
+(RSI, MACD, EMA/SMA, ATR, Bollinger) and leaves interpretation to the AI, so
+the math is back-testable without an AI key. Each indicator is gated on having
+enough history for its window (no NaN, no noisy library warnings), non-finite
+floats collapse to `None`, and `to_storage_dict()` yields the JSON that lands
+in `signals.indicators_snapshot`.
+
+**AI providers** (`app/services/ai/`). A Template Method split: `BaseAIProvider`
+owns prompt construction, JSON extraction (tolerant of code fences and
+surrounding prose), validation into a `SignalDraft`, and the "a directional
+call needs an entry" rule — *once*. Each concrete provider (`GroqProvider`,
+`AnthropicProvider`) implements only `_complete()` and translates its SDK's
+errors into `AIRequestError`. A `SignalDraft` is **not** a persisted `Signal`:
+it carries no identity, and supports up to three take-profits (TP1/TP2/TP3) to
+match the product. `build_ai_provider(settings)` is the factory.
+
+**Scheduler** (`app/tasks/`). `Scheduler` wraps APScheduler's
+`AsyncIOScheduler` with safe defaults: `max_instances=1` (an overrunning cycle
+never doubles up), `coalesce=True` (missed slots collapse to one run), and a
+misfire grace window. `AnalysisJob` wraps the pipeline with error containment —
+a crashing cycle is logged, never propagated, so one failure can't kill the
+schedule. `scheduler_enabled` lets you run the job on exactly one instance in a
+horizontally-scaled deployment (running it everywhere would duplicate signals
+and multiply provider cost). Until the Iteration-4 controller exists, a
+`pipeline_not_configured` placeholder runs on cadence and announces itself.
+
+**Lifecycle + DI.** External clients (market data, AI) and the scheduler are
+constructed in the FastAPI **lifespan** (not `create_app`), so lightweight
+unit tests never spin up real SDK/HTTP clients. They are stashed on
+`app.state` and exposed via `MarketDataProviderDep`, `AIProviderDep`, and
+`SchedulerDep` for the Iteration-4 controllers. Shutdown stops the scheduler
+and `aclose()`s each provider. The health endpoint now reports `scheduler`,
+`market_data`, and `ai_provider` components (the scheduler distinguishes
+"enabled but not running" → `down` from "disabled by config" → `not_configured`).
+
 ## 🧪 Run
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -306,13 +383,42 @@ API docs in development:
 ## 🧪 Tests + Lint
 ```bash
 # Tests cover config validation, schemas, dependencies, the Database adapter,
-# health DB-probe behaviour, and end-to-end app wiring.
+# health DB-probe behaviour, end-to-end app wiring; Iteration 2's ORM models,
+# repository query surface (SQL compiled with literal binds), and Alembic
+# migration rendering; and Iteration 3's market-data provider (httpx
+# MockTransport: retries, error mapping, symbol/interval mapping), indicator
+# calculator (structure, NaN handling, determinism), AI providers (prompt,
+# JSON extraction, validation, SDK error wrapping), scheduler lifecycle, and
+# the lifespan service wiring.
 pytest
 
 # Lint + format
 ruff check .
 ruff format --check .
 ```
+
+### ✅ Verification status (Iterations 1, 2 & 3)
+Last verified on 2026-05-31:
+- `pytest` — **208 passed** (135 from Iterations 1–2, +73 for Iteration 3)
+- `ruff check .` — clean
+- `ruff format --check .` — clean (67 files)
+- `create_app()` boots and registers `GET /api/v1/health`
+- `alembic upgrade head --sql` renders the full schema with the three native
+  enums created before the tables that reference them
+- Lifespan integration test: scheduler starts, providers construct, health
+  reports all components `ok`, and shutdown stops the scheduler and closes
+  every client
+- End-to-end composition (mock market data → indicators → AI context →
+  parsed `SignalDraft`) verified by hand against the real types
+
+> **Deferred to later iterations on purpose:** live-Postgres round-trips and
+> real Twelve Data / Groq / Anthropic network calls. The AI and market-data
+> integrations are exercised with injected fake SDK clients and
+> `httpx.MockTransport`; the pipeline orchestration that persists signals is
+> the Iteration-4 controller (the scheduled job currently runs a
+> self-announcing placeholder). With no database reachable,
+> `Database.healthcheck()` degrades gracefully to `False` rather than raising —
+> confirmed at runtime.
 
 ## 🔐 Env
 Copy `.env.example` to `.env` and fill in the values:
@@ -332,12 +438,24 @@ DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/tradesignal
 AI_PROVIDER=groq
 AI_MODEL=llama-3.3-70b-versatile
 AI_API_KEY=your_api_key_here
+# AI_TEMPERATURE=0.2
+# AI_MAX_TOKENS=1024
+# AI_TIMEOUT_SECONDS=30
 
 MARKET_DATA_PROVIDER=twelve_data
 TWELVE_DATA_API_KEY=your_key_here
+# TWELVE_DATA_BASE_URL=https://api.twelvedata.com
+# MARKET_DATA_TIMEOUT_SECONDS=15
+# MARKET_DATA_MAX_RETRIES=3
 
 ANALYSIS_INTERVAL_MINUTES=15
 ANALYSIS_CANDLE_COUNT=200
 ANALYSIS_TIMEFRAME=1h
 ACTIVE_PAIRS=XAUUSD,GBPUSD,EURUSD
+
+# Scheduler — disable on API-only replicas so the analysis job runs on
+# exactly one instance in a horizontally-scaled deployment.
+# SCHEDULER_ENABLED=true
+# SCHEDULER_TIMEZONE=UTC
+# SCHEDULER_MISFIRE_GRACE_SECONDS=60
 ```
