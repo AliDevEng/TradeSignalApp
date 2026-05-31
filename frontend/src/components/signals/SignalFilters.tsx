@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useForm, useWatch } from "react-hook-form";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { SlidersHorizontal, X } from "lucide-react";
 import { z } from "zod";
 
@@ -30,7 +31,51 @@ const filterSchema = z.object({
 
 type SignalFilterFormValues = z.infer<typeof filterSchema>;
 
+const defaultFilters: SignalFilterFormValues = {
+  direction: "all",
+  status: "all",
+  pair: "all",
+  sort: "confidence"
+};
+
+function readFiltersFromSearchParams(searchParams: URLSearchParams): SignalFilterFormValues {
+  const candidate = {
+    direction: searchParams.get("direction") ?? defaultFilters.direction,
+    status: searchParams.get("status") ?? defaultFilters.status,
+    pair: searchParams.get("pair") ?? defaultFilters.pair,
+    sort: searchParams.get("sort") ?? defaultFilters.sort
+  };
+  const parsed = filterSchema.safeParse(candidate);
+
+  return parsed.success ? parsed.data : defaultFilters;
+}
+
+function writeFiltersToSearchParams(values: SignalFilterFormValues): string {
+  const nextParams = new URLSearchParams();
+
+  if (values.direction !== defaultFilters.direction) {
+    nextParams.set("direction", values.direction);
+  }
+
+  if (values.status !== defaultFilters.status) {
+    nextParams.set("status", values.status);
+  }
+
+  if (values.pair !== defaultFilters.pair) {
+    nextParams.set("pair", values.pair);
+  }
+
+  if (values.sort !== defaultFilters.sort) {
+    nextParams.set("sort", values.sort);
+  }
+
+  return nextParams.toString();
+}
+
 export function SignalFilters({ pairs }: SignalFiltersProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const direction = useSignalStore((state) => state.direction);
   const status = useSignalStore((state) => state.status);
   const pair = useSignalStore((state) => state.pair);
@@ -42,15 +87,14 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
   const reset = useSignalStore((state) => state.reset);
 
   const form = useForm<SignalFilterFormValues>({
-    defaultValues: {
-      direction,
-      status,
-      pair,
-      sort
-    },
+    defaultValues: readFiltersFromSearchParams(searchParams),
     mode: "onChange"
   });
   const values = useWatch({ control: form.control });
+
+  useEffect(() => {
+    form.reset(readFiltersFromSearchParams(searchParams));
+  }, [form, searchParams]);
 
   useEffect(() => {
     const candidate = {
@@ -69,9 +113,19 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
     setStatus(parsed.data.status);
     setPair(parsed.data.pair);
     setSort(parsed.data.sort);
+
+    const nextQuery = writeFiltersToSearchParams(parsed.data);
+    const currentQuery = searchParams.toString();
+
+    if (nextQuery !== currentQuery) {
+      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+    }
   }, [
     direction,
+    pathname,
     pair,
+    router,
+    searchParams,
     setDirection,
     setPair,
     setSort,
@@ -85,15 +139,9 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
   ]);
 
   function resetFilters() {
-    const initialValues: SignalFilterFormValues = {
-      direction: "all",
-      status: "all",
-      pair: "all",
-      sort: "confidence"
-    };
-
-    form.reset(initialValues);
+    form.reset(defaultFilters);
     reset();
+    router.replace(pathname, { scroll: false });
   }
 
   return (

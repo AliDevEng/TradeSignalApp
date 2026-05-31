@@ -63,8 +63,7 @@ export default async function PairDetailPage({ params }: PairDetailPageProps) {
   const candles = getCandlesForPair(pair.symbol);
 
   return (
-    <main className="min-h-screen bg-[var(--background)] px-4 py-6 sm:px-6">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+    <div className="flex flex-col gap-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <Link
@@ -174,8 +173,7 @@ export default async function PairDetailPage({ params }: PairDetailPageProps) {
             </Card>
           </div>
         </div>
-      </div>
-    </main>
+    </div>
   );
 }
 

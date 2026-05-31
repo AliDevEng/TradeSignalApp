@@ -36,6 +36,7 @@ TradeSignalApp/
 - ✅ Frontend Iteration 2 is complete: shared UI primitives, dashboard shell, signal list, signal cards, and Zustand filters
 - ✅ Frontend Iteration 3 is complete: candlestick charts, signal overlays, pair detail pages, and signal reasoning views
 - ✅ Frontend Iteration 4 is complete: validated signal filters, backend signal/pair integration, richer loading/empty/error states, responsive QA, and final cleanup
+- ✅ Frontend Iteration 5 is complete: app-wide navigation shell, dedicated dashboard/signals/analysis routes, URL-synced filters, route boundaries, breadcrumbs, and active-route highlighting
 - ✅ Backend Iteration 1 is complete: FastAPI app factory, settings, health endpoint, and response envelopes
 - ✅ Backend Iteration 2 is complete and verified: async engine/session, ORM models, Alembic migration, and repository layer
 - ✅ Backend Iteration 3 is complete and verified: Twelve Data market-data service, pure indicator calculator, Groq/Anthropic AI provider pattern, and APScheduler wiring — 208 backend tests green, ruff clean

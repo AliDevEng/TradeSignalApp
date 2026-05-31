@@ -54,8 +54,7 @@ export default async function SignalDetailPage({ params }: SignalDetailPageProps
   const precision = getPricePrecision(signal.symbol);
 
   return (
-    <main className="min-h-screen bg-[var(--background)] px-4 py-6 sm:px-6">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+    <div className="flex flex-col gap-6">
         <div>
           <Link
             className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--blue-strong)] transition-colors hover:text-[#8ab8ff]"
@@ -162,8 +161,7 @@ export default async function SignalDetailPage({ params }: SignalDetailPageProps
             </Card>
           </div>
         </div>
-      </div>
-    </main>
+    </div>
   );
 }
 

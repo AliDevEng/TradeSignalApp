@@ -33,13 +33,14 @@ Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain
 - Iteration 2 is complete: shared UI primitives, dashboard shell, signal queue, signal cards, and Zustand filters are in place.
 - Iteration 3 is complete: typed mock candlestick data, chart overlays, pair detail pages, and signal reasoning views are in place.
 - Iteration 4 is complete: validated signal filters, richer loading/empty/error states, backend signal/pair integration, responsive cleanup, and build checks are in place.
+- Iteration 5 is complete: app-wide navigation shell, real `/dashboard`, `/signals`, and `/analysis` routes, URL-synced filters, route boundaries, breadcrumbs, and active-route highlighting are in place.
 - The first screen is now a luxury fintech operations dashboard using a black, gold, blue, and red visual system backed by live backend signal endpoints with typed mock fallback for local preview.
 - Dynamic routes now exist for `/pairs/[symbol]` and `/signals/[signalId]`.
 - Backend health remains wired to `GET /api/v1/health`.
 - `any` is not allowed by ESLint (`@typescript-eslint/no-explicit-any: error`).
 - `postcss` is overridden to `8.5.14` so `npm audit --audit-level=moderate` reports no vulnerabilities.
 - Verified with `npm run check` and local route probes returning `200 OK` for `/`, `/pairs/XAUUSD`, and `/signals/sig-xauusd-1`.
-- Next up: Iterations 5-8 (Navigation & IA → Real Data Depth → Live & Interactive → Quality & Production). See **Planned Work** below.
+- Next up: Iterations 6-8 (Real Data Depth -> Live & Interactive -> Quality & Production). See **Planned Work** below.
 
 ## Setup Commands
 ```bash
@@ -112,15 +113,15 @@ Auth/accounts (Phase 2) is intentionally **out of scope** for this plan.
 - **Auth/accounts are deferred** to Phase 2 and excluded from Iterations 5-8.
 
 ### Iteration 5 - Navigation & Information Architecture (16 points)
-- [ ] (4) App-wide `Navbar`/`Sidebar` with real Next.js routing (replace the
+- [x] (4) App-wide `Navbar`/`Sidebar` with real Next.js routing (replace the
   view-state nav tabs so navigation actually changes the route)
-- [ ] (4) Dedicated routes: `/dashboard` (alias of `/`), `/signals` (browse all),
+- [x] (4) Dedicated routes: `/dashboard` (alias of `/`), `/signals` (browse all),
   `/analysis` (run ledger); keep `/` as the dashboard
-- [ ] (3) URL-synced filters (direction/status/pair/sort in the query string —
+- [x] (3) URL-synced filters (direction/status/pair/sort in the query string —
   shareable and deep-linkable) backed by the existing Zustand store
-- [ ] (3) Route boundaries: `loading.tsx`, `error.tsx`, and a custom
+- [x] (3) Route boundaries: `loading.tsx`, `error.tsx`, and a custom
   `not-found.tsx`
-- [ ] (2) Breadcrumbs + active-route highlighting
+- [x] (2) Breadcrumbs + active-route highlighting
 
 ### Iteration 6 - Real Data Depth (20 points)
 - [ ] (5) Server-side pagination + filtering for signals (drive `page`/`per_page`/
