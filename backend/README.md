@@ -54,7 +54,7 @@ pip install -r requirements-dev.txt
 - [x] (5) Add APScheduler job and startup wiring
 
 ### Iteration 4 - Business Logic + API Endpoints (18 points)
-- [ ] (6) Implement analysis controller
+- [x] (6) Implement analysis controller
 - [ ] (5) Implement signal controller
 - [ ] (4) Implement signals/pairs/analysis routers
 - [ ] (3) Add validation and error-handling strategy
@@ -367,6 +367,48 @@ unit tests never spin up real SDK/HTTP clients. They are stashed on
 and `aclose()`s each provider. The health endpoint now reports `scheduler`,
 `market_data`, and `ai_provider` components (the scheduler distinguishes
 "enabled but not running" → `down` from "disabled by config" → `not_configured`).
+
+### Analysis controller (Iteration 4.1 deliverable)
+
+The `AnalysisController` (`app/controllers/analysis_controller.py`) is the
+orchestration the Iteration-3 services were built for: for each active pair it
+fetches candles → computes indicators → asks the AI → drafts a signal, then
+records the run ledger and the signals it produced. It replaces the
+`pipeline_not_configured` placeholder as the scheduled job's pipeline, and is
+constructed once in the lifespan and stashed on `app.state` (exposed via
+`AnalysisControllerDep` for the upcoming manual-trigger endpoint).
+
+Load-bearing design decisions:
+
+- **The controller owns transaction boundaries; services and repositories do
+  not.** It composes repositories (which only stage work) and decides when a
+  unit of work commits.
+- **No transaction is held open across network IO.** A run is split into three
+  short transactions — open the `RUNNING` ledger row → *(fan out across pairs:
+  market-data + AI calls, owning no DB connection)* → persist signals and stamp
+  the terminal status — so a minutes-long cycle never pins a pooled connection
+  while waiting on third parties. Signals and the final ledger update share one
+  transaction, so the reported counts can never disagree with the rows
+  committed.
+- **Per-pair failures are isolated.** Each pair is analysed defensively; an
+  expected `ServiceError` (provider down, insufficient candles, unparseable AI
+  reply) fails just that pair, an unexpected exception is contained too but
+  logged with a traceback. The run's terminal status reflects the mix —
+  `SUCCESS` (all analysed, or no active pairs), `PARTIAL` (some failed), or
+  `FAILED` (all failed) — which is exactly the distinction `AnalysisRun.status`
+  carved out `PARTIAL` to express.
+- **It manages its own sessions via the `Database` adapter**, not a
+  request-scoped one, because a run is a background unit of work with no HTTP
+  request behind it — which is also what keeps it reusable from a future
+  manual-trigger endpoint that dispatches it as a background task.
+
+Two boundary decisions worth calling out: only **directional** (`buy`/`sell`)
+drafts become `Signal` rows — a `neutral` draft is a successful "no trade this
+cycle" analysis, not a signal, and the `signals` table enforces
+`entry_price NOT NULL` for actionable trades. And because the current schema
+has a single `take_profit` column, only **TP1** is persisted; surfacing
+TP1/TP2/TP3 is a deliberate schema-change follow-up rather than silent data
+loss.
 
 ## 🧪 Run
 ```bash

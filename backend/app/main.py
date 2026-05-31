@@ -19,12 +19,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.config import Settings, get_settings
+from app.controllers import AnalysisController
 from app.database import Database
 from app.logging_config import configure_logging
 from app.schemas.common import ErrorDetail, ErrorResponse
 from app.services.ai import AIProvider, build_ai_provider
 from app.services.market_data import MarketDataProvider, build_market_data_provider
-from app.tasks import AnalysisJob, Scheduler, pipeline_not_configured
+from app.tasks import AnalysisJob, Scheduler
 from app.views import api_v1_router
 
 logger = logging.getLogger(__name__)
@@ -70,9 +71,22 @@ async def lifespan(app: FastAPI):
     app.state.ai_provider = ai_provider
     app.state.scheduler = scheduler
 
-    # Register the analysis cadence. The pipeline body is a placeholder until
-    # the Iteration-4 controller is wired; the schedule itself is real.
-    job = AnalysisJob(pipeline_not_configured)
+    # The analysis controller is the pipeline. It manages its own database
+    # sessions (it takes the Database adapter, not a request session) because a
+    # run is a minutes-long background unit of work — which is exactly what makes
+    # the same instance reusable from a future manual-trigger endpoint.
+    analysis_controller = AnalysisController(
+        database=database,
+        market_data=market_data,
+        ai_provider=ai_provider,
+        settings=settings,
+    )
+    app.state.analysis_controller = analysis_controller
+
+    # Register the analysis cadence with the real pipeline. `run_scheduled`
+    # matches the job's `() -> Awaitable[None]` contract; the job wraps it with
+    # error containment so a crashing cycle never kills the schedule.
+    job = AnalysisJob(analysis_controller.run_scheduled)
     scheduler.add_interval_job(
         job.run,
         minutes=settings.analysis_interval_minutes,

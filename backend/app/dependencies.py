@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.controllers import AnalysisController
 from app.database import Database
 from app.database.repository import (
     AnalysisRunRepository,
@@ -150,3 +151,10 @@ def get_scheduler(request: Request) -> Scheduler:
 
 
 SchedulerDep = Annotated[Scheduler, Depends(get_scheduler)]
+
+
+def get_analysis_controller(request: Request) -> AnalysisController:
+    return _require_state(request, "analysis_controller", "Analysis controller")  # type: ignore[return-value]
+
+
+AnalysisControllerDep = Annotated[AnalysisController, Depends(get_analysis_controller)]
