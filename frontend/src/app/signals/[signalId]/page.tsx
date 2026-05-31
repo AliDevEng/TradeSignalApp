@@ -21,6 +21,9 @@ import {
   getPricePrecision
 } from "@/lib/formatters";
 import { getSignalById, getCandlesForPair } from "@/lib/mockSignals";
+import { mapApiPair, mapApiSignal } from "@/lib/signalMappers";
+import { getPairs, getSignal } from "@/services/tradeService";
+import type { Signal } from "@/types/signal";
 
 type SignalDetailPageProps = {
   params: Promise<{
@@ -28,9 +31,20 @@ type SignalDetailPageProps = {
   }>;
 };
 
+async function loadSignalDetail(signalId: string): Promise<Signal | null> {
+  try {
+    const [apiPairs, apiSignal] = await Promise.all([getPairs(), getSignal(signalId)]);
+    const pairs = apiPairs.map(mapApiPair);
+
+    return mapApiSignal(apiSignal, pairs);
+  } catch {
+    return getSignalById(signalId) ?? null;
+  }
+}
+
 export default async function SignalDetailPage({ params }: SignalDetailPageProps) {
   const { signalId } = await params;
-  const signal = getSignalById(signalId);
+  const signal = await loadSignalDetail(signalId);
 
   if (!signal) {
     notFound();

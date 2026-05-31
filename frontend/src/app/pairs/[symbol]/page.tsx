@@ -6,11 +6,14 @@ import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { SignalBadge, SignalStatusBadge } from "@/components/signals/SignalBadge";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { formatDateTime, formatPercent } from "@/lib/formatters";
+import { mapApiPair, mapApiSignal } from "@/lib/signalMappers";
 import {
   getCandlesForPair,
   getSignalsForPair,
   getTradingPairBySymbol
 } from "@/lib/mockSignals";
+import { getPair, getPairSignals } from "@/services/tradeService";
+import type { Signal, TradingPair } from "@/types/signal";
 
 type PairDetailPageProps = {
   params: Promise<{
@@ -18,15 +21,44 @@ type PairDetailPageProps = {
   }>;
 };
 
+type PairDetailData = {
+  pair: TradingPair;
+  signals: Signal[];
+};
+
+async function loadPairDetail(symbol: string): Promise<PairDetailData | null> {
+  try {
+    const apiPair = await getPair(symbol);
+    const pair = mapApiPair(apiPair);
+    const apiSignals = await getPairSignals(pair.symbol);
+
+    return {
+      pair,
+      signals: apiSignals.map((signal) => mapApiSignal(signal, [pair]))
+    };
+  } catch {
+    const pair = getTradingPairBySymbol(symbol);
+
+    if (!pair) {
+      return null;
+    }
+
+    return {
+      pair,
+      signals: getSignalsForPair(pair.symbol)
+    };
+  }
+}
+
 export default async function PairDetailPage({ params }: PairDetailPageProps) {
   const { symbol } = await params;
-  const pair = getTradingPairBySymbol(symbol);
+  const data = await loadPairDetail(symbol);
 
-  if (!pair) {
+  if (!data) {
     notFound();
   }
 
-  const pairSignals = getSignalsForPair(pair.symbol);
+  const { pair, signals: pairSignals } = data;
   const activeSignal = pairSignals.find((signal) => signal.status === "active") ?? pairSignals[0];
   const candles = getCandlesForPair(pair.symbol);
 
@@ -104,32 +136,40 @@ export default async function PairDetailPage({ params }: PairDetailPageProps) {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {pairSignals.map((signal) => (
-                  <Link
-                    className="block rounded-lg border border-[var(--panel-border)] bg-[#0d131c] p-4 transition-colors hover:border-[#6f5620]"
-                    href={`/signals/${signal.id}`}
-                    key={signal.id}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <SignalBadge direction={signal.direction} />
-                          <SignalStatusBadge status={signal.status} />
+                {pairSignals.length > 0 ? (
+                  pairSignals.map((signal) => (
+                    <Link
+                      className="block rounded-lg border border-[var(--panel-border)] bg-[#0d131c] p-4 transition-colors hover:border-[#6f5620]"
+                      href={`/signals/${signal.id}`}
+                      key={signal.id}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <SignalBadge direction={signal.direction} />
+                            <SignalStatusBadge status={signal.status} />
+                          </div>
+                          <p className="mt-3 text-sm leading-6 text-[#c2cad6]">
+                            {signal.rationale}
+                          </p>
                         </div>
-                        <p className="mt-3 text-sm leading-6 text-[#c2cad6]">{signal.rationale}</p>
-                      </div>
-                      <div className="text-right text-xs font-medium text-[var(--muted)]">
-                        <div className="inline-flex items-center gap-1.5">
-                          <Clock3 className="h-3.5 w-3.5" />
-                          {formatDateTime(signal.generatedAt)}
+                        <div className="text-right text-xs font-medium text-[var(--muted)]">
+                          <div className="inline-flex items-center gap-1.5">
+                            <Clock3 className="h-3.5 w-3.5" />
+                            {formatDateTime(signal.generatedAt)}
+                          </div>
+                          <p className="mt-2 text-sm font-semibold text-[#fff8df]">
+                            Confidence {formatPercent(signal.confidence)}
+                          </p>
                         </div>
-                        <p className="mt-2 text-sm font-semibold text-[#fff8df]">
-                          Confidence {formatPercent(signal.confidence)}
-                        </p>
                       </div>
-                    </div>
-                  </Link>
-                ))}
+                    </Link>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-[#45536a] bg-[#0d131c] p-6 text-center text-sm text-[var(--muted)]">
+                    No signals are available for this pair yet.
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

@@ -35,7 +35,7 @@ TradeSignalApp/
 - ✅ Frontend Iteration 1 is complete: Next.js foundation, strict TypeScript, Tailwind, typed API client, and React Query provider
 - ✅ Frontend Iteration 2 is complete: shared UI primitives, dashboard shell, signal list, signal cards, and Zustand filters
 - ✅ Frontend Iteration 3 is complete: candlestick charts, signal overlays, pair detail pages, and signal reasoning views
-- 🚧 Frontend Iteration 4 remains: form validation, richer loading/empty/error states, responsive QA, and final cleanup
+- ✅ Frontend Iteration 4 is complete: validated signal filters, backend signal/pair integration, richer loading/empty/error states, responsive QA, and final cleanup
 - ✅ Backend Iteration 1 is complete: FastAPI app factory, settings, health endpoint, and response envelopes
 - ✅ Backend Iteration 2 is complete and verified: async engine/session, ORM models, Alembic migration, and repository layer
 - ✅ Backend Iteration 3 is complete and verified: Twelve Data market-data service, pure indicator calculator, Groq/Anthropic AI provider pattern, and APScheduler wiring — 208 backend tests green, ruff clean
@@ -73,7 +73,7 @@ npm run dev -- --hostname 127.0.0.1 --port 3000
 ```
 
 ## 🧪 Current Verification
-- ✅ Frontend passes `npm run check`
+- ✅ Frontend passes `npm run check` (verified 2026-05-31)
 - ✅ Frontend routes verified locally: `/`, `/pairs/XAUUSD`, `/signals/sig-xauusd-1`
 - ✅ Backend health endpoint is wired to `GET /api/v1/health`
 - ✅ Backend suite green: `pytest` → 208 passed, `ruff check`/`ruff format --check` clean (verified 2026-05-31)

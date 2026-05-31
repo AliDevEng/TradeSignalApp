@@ -3,6 +3,7 @@
 import { SignalCard } from "@/components/signals/SignalCard";
 import { SignalFilters } from "@/components/signals/SignalFilters";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { useSignalStore } from "@/store/signalStore";
 import { useUIStore } from "@/store/uiStore";
 import type { Signal, TradingPair } from "@/types/signal";
@@ -54,16 +55,15 @@ export function SignalList({ signals, pairs }: SignalListProps) {
             <SignalCard density={density} key={signal.id} signal={signal} />
           ))
         ) : (
-          <div className="rounded-lg border border-dashed border-[#45536a] bg-[var(--panel)] p-8 text-center">
-            <h3 className="text-lg font-semibold text-[#fff8df]">No signals match these filters</h3>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
-              Adjust direction, status, or pair filters to bring more market setups back into
-              view.
-            </p>
-            <Button className="mt-5" onClick={reset} variant="primary">
-              Reset filters
-            </Button>
-          </div>
+          <EmptyState
+            action={
+              <Button onClick={reset} variant="primary">
+                Reset filters
+              </Button>
+            }
+            description="Adjust direction, status, or pair filters to bring more market setups back into view."
+            title="No signals match these filters"
+          />
         )}
       </div>
     </div>

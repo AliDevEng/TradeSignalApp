@@ -32,7 +32,8 @@ Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain
 - Iteration 1 is complete: foundation, strict TypeScript, Tailwind, typed API client, and React Query provider are in place.
 - Iteration 2 is complete: shared UI primitives, dashboard shell, signal queue, signal cards, and Zustand filters are in place.
 - Iteration 3 is complete: typed mock candlestick data, chart overlays, pair detail pages, and signal reasoning views are in place.
-- The first screen is now a luxury fintech operations dashboard using a black, gold, blue, and red visual system backed by typed mock signal data until backend signal endpoints are implemented.
+- Iteration 4 is complete: validated signal filters, richer loading/empty/error states, backend signal/pair integration, responsive cleanup, and build checks are in place.
+- The first screen is now a luxury fintech operations dashboard using a black, gold, blue, and red visual system backed by live backend signal endpoints with typed mock fallback for local preview.
 - Dynamic routes now exist for `/pairs/[symbol]` and `/signals/[signalId]`.
 - Backend health remains wired to `GET /api/v1/health`.
 - `any` is not allowed by ESLint (`@typescript-eslint/no-explicit-any: error`).
@@ -69,10 +70,10 @@ npm install -D typescript@6.0.3 @types/node@25.6.2 @types/react@19.2.14 @types/r
 - [x] (3) Build signal details page with reasoning panel
 
 ### Iteration 4 - Quality + Delivery (13 points)
-- [ ] (3) Form validation with `react-hook-form` + `zod`
-- [ ] (4) Loading, empty, error states
-- [ ] (3) Responsive QA (mobile + desktop)
-- [ ] (3) Build checks + lint cleanup
+- [x] (3) Form validation with `react-hook-form` + `zod`
+- [x] (4) Loading, empty, error states
+- [x] (3) Responsive QA (mobile + desktop)
+- [x] (3) Build checks + lint cleanup
 
 Total: 60 points
 

@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { SlidersHorizontal, X } from "lucide-react";
+import { z } from "zod";
 
 import { Button } from "@/components/ui/Button";
 import { useSignalStore, type SignalSort } from "@/store/signalStore";
@@ -18,6 +21,15 @@ const sorts: Array<{ label: string; value: SignalSort }> = [
   { label: "Symbol", value: "symbol" }
 ];
 
+const filterSchema = z.object({
+  direction: z.enum(directions),
+  status: z.enum(statuses),
+  pair: z.string().min(1, "Choose a pair filter."),
+  sort: z.enum(["confidence", "newest", "symbol"])
+});
+
+type SignalFilterFormValues = z.infer<typeof filterSchema>;
+
 export function SignalFilters({ pairs }: SignalFiltersProps) {
   const direction = useSignalStore((state) => state.direction);
   const status = useSignalStore((state) => state.status);
@@ -29,14 +41,69 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
   const setSort = useSignalStore((state) => state.setSort);
   const reset = useSignalStore((state) => state.reset);
 
+  const form = useForm<SignalFilterFormValues>({
+    defaultValues: {
+      direction,
+      status,
+      pair,
+      sort
+    },
+    mode: "onChange"
+  });
+  const values = useWatch({ control: form.control });
+
+  useEffect(() => {
+    const candidate = {
+      direction: values.direction ?? direction,
+      status: values.status ?? status,
+      pair: values.pair ?? pair,
+      sort: values.sort ?? sort
+    };
+    const parsed = filterSchema.safeParse(candidate);
+
+    if (!parsed.success) {
+      return;
+    }
+
+    setDirection(parsed.data.direction);
+    setStatus(parsed.data.status);
+    setPair(parsed.data.pair);
+    setSort(parsed.data.sort);
+  }, [
+    direction,
+    pair,
+    setDirection,
+    setPair,
+    setSort,
+    setStatus,
+    sort,
+    status,
+    values.direction,
+    values.pair,
+    values.sort,
+    values.status
+  ]);
+
+  function resetFilters() {
+    const initialValues: SignalFilterFormValues = {
+      direction: "all",
+      status: "all",
+      pair: "all",
+      sort: "confidence"
+    };
+
+    form.reset(initialValues);
+    reset();
+  }
+
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4 shadow-[var(--surface-shadow)]">
+    <form className="flex flex-col gap-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4 shadow-[var(--surface-shadow)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="h-4 w-4 text-[var(--gold)]" />
           <h2 className="text-base font-semibold text-[#fff8df]">Signal Queue</h2>
         </div>
-        <Button onClick={reset} size="sm" variant="ghost">
+        <Button onClick={resetFilters} size="sm" type="button" variant="ghost">
           <X className="h-4 w-4" />
           Reset
         </Button>
@@ -47,8 +114,9 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           Direction
           <select
             className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            onChange={(event) => setDirection(event.target.value as typeof direction)}
-            value={direction}
+            {...form.register("direction", {
+              validate: (value) => filterSchema.shape.direction.safeParse(value).success
+            })}
           >
             {directions.map((item) => (
               <option key={item} value={item}>
@@ -62,8 +130,9 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           Status
           <select
             className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            onChange={(event) => setStatus(event.target.value as typeof status)}
-            value={status}
+            {...form.register("status", {
+              validate: (value) => filterSchema.shape.status.safeParse(value).success
+            })}
           >
             {statuses.map((item) => (
               <option key={item} value={item}>
@@ -77,8 +146,9 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           Pair
           <select
             className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            onChange={(event) => setPair(event.target.value)}
-            value={pair}
+            {...form.register("pair", {
+              validate: (value) => filterSchema.shape.pair.safeParse(value).success
+            })}
           >
             <option value="all">All pairs</option>
             {pairs.map((item) => (
@@ -93,8 +163,9 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           Sort
           <select
             className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            onChange={(event) => setSort(event.target.value as SignalSort)}
-            value={sort}
+            {...form.register("sort", {
+              validate: (value) => filterSchema.shape.sort.safeParse(value).success
+            })}
           >
             {sorts.map((item) => (
               <option key={item.value} value={item.value}>
@@ -104,6 +175,6 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           </select>
         </label>
       </div>
-    </div>
+    </form>
   );
 }

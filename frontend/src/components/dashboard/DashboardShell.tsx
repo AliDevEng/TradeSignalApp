@@ -17,13 +17,17 @@ import {
 
 import { HealthPanel } from "@/components/health/HealthPanel";
 import { SignalList } from "@/components/signals/SignalList";
+import { SignalListSkeleton } from "@/components/signals/SignalListSkeleton";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { formatCompactNumber, formatPercent } from "@/lib/formatters";
-import { signals, signalStats, tradingPairs } from "@/lib/mockSignals";
+import { signals as mockSignals, signalStats as mockSignalStats, tradingPairs } from "@/lib/mockSignals";
 import { env } from "@/lib/env";
+import { useAnalysisRunsQuery, useSignalsQuery } from "@/hooks/useTradeQueries";
 import { useUIStore } from "@/store/uiStore";
+import type { Signal, SignalStats, TradingPair } from "@/types/signal";
 
 const navItems = [
   { label: "Overview", icon: Gauge, view: "overview" },
@@ -50,11 +54,27 @@ const intelligenceItems = [
 ] as const;
 
 export function DashboardShell() {
+  const { pairsQuery, signalsQuery } = useSignalsQuery();
+  const analysisRunsQuery = useAnalysisRunsQuery();
   const dashboardView = useUIStore((state) => state.dashboardView);
   const density = useUIStore((state) => state.density);
   const setDashboardView = useUIStore((state) => state.setDashboardView);
   const setDensity = useUIStore((state) => state.setDensity);
   const toggleCommandPanel = useUIStore((state) => state.toggleCommandPanel);
+
+  const pairs = pairsQuery.data ?? tradingPairs;
+  const signals = signalsQuery.data?.signals ?? mockSignals;
+  const stats = calculateSignalStats(signals, pairs);
+  const latestRun = analysisRunsQuery.data?.data[0];
+  const isLoadingSignals = (pairsQuery.isLoading || signalsQuery.isLoading) && !signalsQuery.data;
+  const apiError = pairsQuery.error ?? signalsQuery.error;
+  const isPreviewData = Boolean(apiError);
+
+  function refreshMarketData() {
+    void pairsQuery.refetch();
+    void signalsQuery.refetch();
+    void analysisRunsQuery.refetch();
+  }
 
   return (
     <main className="min-h-screen bg-[var(--background)]">
@@ -126,8 +146,9 @@ export function DashboardShell() {
                   Model focus
                 </div>
                 <p className="mt-3 text-sm leading-6 text-[#c7b98d]">
-                  Prioritize high-confidence continuation setups and protect capital during
-                  balanced regimes.
+                  {latestRun
+                    ? `Latest ${latestRun.trigger} run is ${latestRun.status} on ${latestRun.timeframe}.`
+                    : "Prioritize high-confidence continuation setups and protect capital during balanced regimes."}
                 </p>
               </div>
             </CardContent>
@@ -162,12 +183,17 @@ export function DashboardShell() {
                     built for fast decisions.
                   </p>
                   <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                    <HeroPill label="Conviction" value={formatPercent(signalStats.averageConfidence)} />
-                    <HeroPill label="Model edge" value={formatPercent(signalStats.modelWinRate)} />
-                    <HeroPill label="Live setups" value={signalStats.activeSignals.toString()} />
+                    <HeroPill label="Conviction" value={formatPercent(stats.averageConfidence)} />
+                    <HeroPill label="Model edge" value={formatPercent(stats.modelWinRate)} />
+                    <HeroPill label="Live setups" value={stats.activeSignals.toString()} />
                   </div>
                 </div>
-                <Button variant="primary">
+                <Button
+                  disabled={pairsQuery.isFetching || signalsQuery.isFetching}
+                  onClick={refreshMarketData}
+                  type="button"
+                  variant="primary"
+                >
                   <RefreshCw className="h-4 w-4" />
                   Refresh view
                 </Button>
@@ -182,12 +208,12 @@ export function DashboardShell() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Metric label="Active signals" value={signalStats.activeSignals.toString()} />
+                <Metric label="Active signals" value={stats.activeSignals.toString()} />
                 <Metric
                   label="Average confidence"
-                  value={formatPercent(signalStats.averageConfidence)}
+                  value={formatPercent(stats.averageConfidence)}
                 />
-                <Metric label="Model win rate" value={formatPercent(signalStats.modelWinRate)} />
+                <Metric label="Model win rate" value={formatPercent(stats.modelWinRate)} />
                 <div className="border-t border-[var(--panel-border)] pt-4">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm text-[var(--muted)]">Capital posture</span>
@@ -213,14 +239,14 @@ export function DashboardShell() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Monitored pairs" value={signalStats.monitoredPairs.toString()} />
+            <StatCard label="Monitored pairs" value={stats.monitoredPairs.toString()} />
             <StatCard
               label="Analysis cadence"
-              value={`${signalStats.analysisCadenceMinutes}m`}
+              value={`${stats.analysisCadenceMinutes}m`}
             />
             <StatCard
               label="Monthly signal volume"
-              value={formatCompactNumber(signalStats.monthlySignalVolume)}
+              value={formatCompactNumber(stats.monthlySignalVolume)}
             />
             <StatCard label="UI density" value={density} />
           </div>
@@ -258,11 +284,41 @@ export function DashboardShell() {
             </div>
           </div>
 
-          <SignalList pairs={tradingPairs} signals={signals} />
+          {isPreviewData && apiError ? (
+            <ErrorState
+              error={apiError}
+              onRetry={refreshMarketData}
+              title="Live API unavailable, showing preview data"
+            />
+          ) : null}
+
+          {isLoadingSignals ? <SignalListSkeleton /> : <SignalList pairs={pairs} signals={signals} />}
         </section>
       </div>
     </main>
   );
+}
+
+function calculateSignalStats(signals: Signal[], pairs: TradingPair[]): SignalStats {
+  if (signals.length === 0) {
+    return {
+      ...mockSignalStats,
+      activeSignals: 0,
+      averageConfidence: 0,
+      monitoredPairs: pairs.filter((pair) => pair.isActive).length,
+      monthlySignalVolume: 0
+    };
+  }
+
+  return {
+    activeSignals: signals.filter((signal) => signal.status === "active").length,
+    averageConfidence:
+      signals.reduce((sum, signal) => sum + signal.confidence, 0) / signals.length,
+    modelWinRate: mockSignalStats.modelWinRate,
+    monitoredPairs: pairs.filter((pair) => pair.isActive).length,
+    analysisCadenceMinutes: mockSignalStats.analysisCadenceMinutes,
+    monthlySignalVolume: Math.max(signals.length * 320, signals.length)
+  };
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
