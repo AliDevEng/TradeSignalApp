@@ -57,7 +57,7 @@ pip install -r requirements-dev.txt
 - [x] (6) Implement analysis controller
 - [x] (5) Implement signal controller
 - [x] (4) Implement signals/pairs/analysis routers
-- [ ] (3) Add validation and error-handling strategy
+- [x] (3) Add validation and error-handling strategy
 
 ### Iteration 5 - Quality + Delivery (12 points)
 - [ ] (4) Unit tests for controllers/services
@@ -470,10 +470,47 @@ single-instance guard (an operator-initiated run may overlap a scheduled one);
 each run is its own ledger row and the `(pair_id, analysis_run_id)` constraint
 still prevents duplicate signals within a run.
 
-Not-found is handled in one place: controllers raise the framework-agnostic
-`ResourceNotFoundError` and a single handler in `app/main.py` maps it to a
-structured `404`. The broader domain-error strategy (service failures, etc.) is
-Iteration 4.4, built on this same pattern.
+Not-found is handled centrally (see below): controllers raise the
+framework-agnostic `ResourceNotFoundError` and one handler maps it to a `404`.
+
+### Validation + error handling (Iteration 4.4 deliverable)
+
+**Validation is layered**, each layer owning what it can prove:
+
+1. **Edge (FastAPI + pydantic).** Path/query/body are validated before a handler
+   runs — bad types, out-of-range pagination (`page ≥ 1`, `per_page ≤ 100`),
+   malformed UUIDs, unknown `?status=` values. Failures become a `422` with one
+   structured entry per field, so the frontend can render per-field messages.
+2. **Domain invariants (models/services).** `Settings` is fail-fast at boot;
+   `Candle` and `SignalDraft` self-validate so a corrupt bar or an out-of-range
+   confidence can't propagate. These are enforced once, where the data is born.
+3. **Controller resolution.** Inputs that name a concrete resource (a signal id,
+   a pair symbol) raise `ResourceNotFoundError` when they don't resolve.
+
+**Error handling is centralised** in `app/error_handlers.py` —
+`register_exception_handlers(app)` is the single place that maps every failure
+to the shared `ErrorResponse` envelope, so the policy is auditable in one file
+rather than scattered across handlers. Domain and service errors stay
+framework-agnostic (no HTTP status leaks into controllers/services); this module
+is the boundary that translates them, with a stable client-facing code
+vocabulary (`ErrorCode`):
+
+| Raised | HTTP | `code` | Client sees |
+|---|---|---|---|
+| `RequestValidationError` | 422 | `VALIDATION_ERROR` | per-field `fields[]` |
+| `ResourceNotFoundError` | 404 | `NOT_FOUND` | the identifier it supplied |
+| `RateLimitError` | 429 | `RATE_LIMITED` | generic "retry shortly" |
+| `ServiceError` (other) | 503 | `SERVICE_UNAVAILABLE` | generic; cause logged |
+| `OperationalError` (DB) | 503 | `SERVICE_UNAVAILABLE` | generic; cause logged |
+| `HTTPException` | as-is | `HTTP_{code}` | framework detail |
+| any other `Exception` | 500 | `INTERNAL_ERROR` | message **only in dev** |
+
+The split between "expected" and "infrastructure" errors is deliberate:
+not-found echoes the caller's own identifier (safe, useful), while upstream and
+database failures return a generic message and log the real cause — provider
+error text and SQL never reach the client. `OperationalError` (couldn't reach
+the database) is surfaced as a retryable `503` rather than a blanket `500`, and
+unexpected exceptions only reveal their message in development.
 
 ## 🧪 Run
 ```bash

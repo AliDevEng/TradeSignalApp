@@ -39,7 +39,8 @@ TradeSignalApp/
 - ✅ Backend Iteration 1 is complete: FastAPI app factory, settings, health endpoint, and response envelopes
 - ✅ Backend Iteration 2 is complete and verified: async engine/session, ORM models, Alembic migration, and repository layer
 - ✅ Backend Iteration 3 is complete and verified: Twelve Data market-data service, pure indicator calculator, Groq/Anthropic AI provider pattern, and APScheduler wiring — 208 backend tests green, ruff clean
-- 🚧 Backend Iteration 4 is next: analysis + signal controllers, signals/pairs/analysis routers, and validation/error-handling strategy
+- ✅ Backend Iteration 4 is complete: analysis + signal controllers, signals/pairs/analysis routers, and a centralised validation/error-handling strategy — 208 backend tests green, ruff clean, OpenAPI generates cleanly
+- 🚧 Backend Iteration 5 is next: unit + integration tests, lint/static checks, and Docker/runtime polish
 
 ## 🛠️ Core Stack
 - 🎨 Frontend: Next.js + React + TypeScript + Tailwind

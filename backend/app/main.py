@@ -9,20 +9,16 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any
 
-from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.config import Settings, get_settings
-from app.controllers import AnalysisController, ResourceNotFoundError
+from app.controllers import AnalysisController
 from app.database import Database
+from app.error_handlers import register_exception_handlers
 from app.logging_config import configure_logging
-from app.schemas.common import ErrorDetail, ErrorResponse
 from app.services.ai import AIProvider, build_ai_provider
 from app.services.market_data import MarketDataProvider, build_market_data_provider
 from app.tasks import AnalysisJob, Scheduler
@@ -111,71 +107,6 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down TradeSignal AI")
 
 
-def _error_response(
-    code: str,
-    message: str,
-    status_code: int,
-    fields: list[dict[str, Any]] | None = None,
-) -> JSONResponse:
-    body = ErrorResponse(error=ErrorDetail(code=code, message=message, fields=fields or []))
-    return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
-
-
-async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    return _error_response(
-        code=f"HTTP_{exc.status_code}",
-        message=str(exc.detail),
-        status_code=exc.status_code,
-    )
-
-
-async def _validation_exception_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    """Return one structured entry per failed field instead of a flattened string.
-
-    Frontends can render per-field errors directly from the `fields` array,
-    while `message` keeps a human-readable summary for logs and quick glances.
-    """
-    fields = [
-        {
-            "loc": [str(part) for part in err.get("loc", [])],
-            "msg": err.get("msg", ""),
-            "type": err.get("type", ""),
-        }
-        for err in exc.errors()
-    ]
-    summary = f"{len(fields)} validation error(s)"
-    return _error_response(
-        code="VALIDATION_ERROR",
-        message=summary,
-        status_code=422,
-        fields=fields,
-    )
-
-
-async def _not_found_handler(request: Request, exc: ResourceNotFoundError) -> JSONResponse:
-    """Map a controller-layer not-found onto a structured 404.
-
-    Controllers raise ``ResourceNotFoundError`` without knowing about HTTP; this
-    is the single place that turns it into a status code. Iteration 4.4 extends
-    this same pattern to the rest of the domain error vocabulary (service
-    failures, etc.).
-    """
-    return _error_response(
-        code="NOT_FOUND",
-        message=str(exc),
-        status_code=404,
-    )
-
-
-async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled exception on %s %s", request.method, request.url)
-    settings: Settings = request.app.state.settings
-    message = str(exc) if settings.is_development else "An unexpected error occurred"
-    return _error_response(code="INTERNAL_ERROR", message=message, status_code=500)
-
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build a fresh FastAPI app. Tests can pass a custom Settings."""
     settings = settings or get_settings()
@@ -208,10 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_headers=["*"],
         )
 
-    app.add_exception_handler(ResourceNotFoundError, _not_found_handler)
-    app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
-    app.add_exception_handler(RequestValidationError, _validation_exception_handler)
-    app.add_exception_handler(Exception, _unhandled_exception_handler)
+    register_exception_handlers(app)
 
     app.include_router(api_v1_router)
 
