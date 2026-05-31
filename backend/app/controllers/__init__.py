@@ -16,14 +16,18 @@ view layer owns the mapping to HTTP.
 """
 
 from app.controllers.analysis_controller import AnalysisController
+from app.controllers.analysis_run_controller import AnalysisRunController
 from app.controllers.exceptions import ControllerError, ResourceNotFoundError
+from app.controllers.pair_controller import PairController
 from app.controllers.results import Page
 from app.controllers.signal_controller import SignalController
 
 __all__ = [
     "AnalysisController",
+    "AnalysisRunController",
     "ControllerError",
     "Page",
+    "PairController",
     "ResourceNotFoundError",
     "SignalController",
 ]

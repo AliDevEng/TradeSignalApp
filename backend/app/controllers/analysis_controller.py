@@ -176,6 +176,16 @@ class AnalysisController:
         """
         await self.run_analysis(trigger=AnalysisRunTrigger.SCHEDULER)
 
+    async def run_manual(self) -> AnalysisRun:
+        """Run the pipeline once, tagged as operator-triggered.
+
+        Exists so the manual-trigger endpoint can dispatch a run without
+        importing the ORM trigger enum (keeping the view free of model imports).
+        Returns the persisted ledger row for callers that want it; the endpoint
+        dispatches this as a background task and ignores the return.
+        """
+        return await self.run_analysis(trigger=AnalysisRunTrigger.MANUAL)
+
     async def run_analysis(
         self,
         *,

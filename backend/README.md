@@ -56,7 +56,7 @@ pip install -r requirements-dev.txt
 ### Iteration 4 - Business Logic + API Endpoints (18 points)
 - [x] (6) Implement analysis controller
 - [x] (5) Implement signal controller
-- [ ] (4) Implement signals/pairs/analysis routers
+- [x] (4) Implement signals/pairs/analysis routers
 - [ ] (3) Add validation and error-handling strategy
 
 ### Iteration 5 - Quality + Delivery (12 points)
@@ -431,9 +431,49 @@ deliberate contrasts with the analysis controller make the layering legible:
 Supporting types, both transport-agnostic so the view owns the HTTP mapping:
 `controllers.results.Page[T]` (a page slice + total count, no presentation
 concerns) and `controllers.exceptions.ResourceNotFoundError` (raised when a
-signal id or pair symbol doesn't resolve — Iteration 4.4 maps it to a 404 in one
-place). Money fields cross the wire as JSON **strings** (`Decimal`), keeping the
-"never float for prices" discipline all the way out to the client.
+signal id or pair symbol doesn't resolve — mapped to a 404 in one place). Money
+fields cross the wire as JSON **strings** (`Decimal`), keeping the "never float
+for prices" discipline all the way out to the client.
+
+### Routers (Iteration 4.3 deliverable)
+
+The v1 API surface (`app/views/`). Routers are deliberately thin: they translate
+HTTP (path/query params, pagination, status codes) and wrap controller output in
+the shared response envelope — every line of business logic stays in the
+controllers. A view imports controllers and schemas only; it never reaches into
+a repository or the database (the layering rule that keeps the HTTP layer
+swappable and the logic framework-free).
+
+| Method + path | Backed by | Returns |
+|---|---|---|
+| `GET /api/v1/signals` | `SignalController.list_signals` | `PaginatedResponse[SignalResponse]` — `?pair=` and `?run_id=` filters |
+| `GET /api/v1/signals/{signal_id}` | `SignalController.get_signal` | `APIResponse[SignalResponse]` (404 if unknown) |
+| `GET /api/v1/pairs` | `PairController.list_pairs` | `APIResponse[list[PairResponse]]` — `?include_inactive=` |
+| `GET /api/v1/pairs/{symbol}` | `PairController.get_pair` | `APIResponse[PairResponse]` (404 if unknown) |
+| `GET /api/v1/pairs/{symbol}/signals` | `SignalController.list_latest_for_pair` | `APIResponse[list[SignalResponse]]` — `?limit=` |
+| `GET /api/v1/analysis/runs` | `AnalysisRunController.list_runs` | `PaginatedResponse[AnalysisRunResponse]` — `?status=` |
+| `GET /api/v1/analysis/runs/{run_id}` | `AnalysisRunController.get_run` | `APIResponse[AnalysisRunResponse]` (404 if unknown) |
+| `GET /api/v1/analysis/runs/{run_id}/signals` | `SignalController.list_for_run` | `APIResponse[list[SignalResponse]]` |
+| `POST /api/v1/analysis/runs` | `AnalysisController.run_manual` | `202` + `APIResponse[AnalysisRunAccepted]` |
+
+Two read controllers were added so the pairs and analysis routers stay
+layering-compliant: `PairController` (pairs are small and enumerable, so its
+list is unpaginated) and `AnalysisRunController` (the *query* companion to the
+write-side `AnalysisController`, splitting reads of the run ledger from the
+orchestrator that writes it).
+
+`POST /analysis/runs` dispatches the pipeline as a **background task** and
+returns `202` immediately — a full cycle spans every pair's market-data and AI
+calls and would otherwise pin the request open for minutes; the client polls
+`GET /analysis/runs` to observe it. It intentionally bypasses the scheduler's
+single-instance guard (an operator-initiated run may overlap a scheduled one);
+each run is its own ledger row and the `(pair_id, analysis_run_id)` constraint
+still prevents duplicate signals within a run.
+
+Not-found is handled in one place: controllers raise the framework-agnostic
+`ResourceNotFoundError` and a single handler in `app/main.py` maps it to a
+structured `404`. The broader domain-error strategy (service failures, etc.) is
+Iteration 4.4, built on this same pattern.
 
 ## 🧪 Run
 ```bash

@@ -19,7 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.config import Settings, get_settings
-from app.controllers import AnalysisController
+from app.controllers import AnalysisController, ResourceNotFoundError
 from app.database import Database
 from app.logging_config import configure_logging
 from app.schemas.common import ErrorDetail, ErrorResponse
@@ -154,6 +154,21 @@ async def _validation_exception_handler(
     )
 
 
+async def _not_found_handler(request: Request, exc: ResourceNotFoundError) -> JSONResponse:
+    """Map a controller-layer not-found onto a structured 404.
+
+    Controllers raise ``ResourceNotFoundError`` without knowing about HTTP; this
+    is the single place that turns it into a status code. Iteration 4.4 extends
+    this same pattern to the rest of the domain error vocabulary (service
+    failures, etc.).
+    """
+    return _error_response(
+        code="NOT_FOUND",
+        message=str(exc),
+        status_code=404,
+    )
+
+
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception on %s %s", request.method, request.url)
     settings: Settings = request.app.state.settings
@@ -193,6 +208,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_headers=["*"],
         )
 
+    app.add_exception_handler(ResourceNotFoundError, _not_found_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)

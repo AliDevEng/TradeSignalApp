@@ -15,7 +15,12 @@ from typing import Annotated
 from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.controllers import AnalysisController, SignalController
+from app.controllers import (
+    AnalysisController,
+    AnalysisRunController,
+    PairController,
+    SignalController,
+)
 from app.database import Database
 from app.database.repository import (
     AnalysisRunRepository,
@@ -129,6 +134,20 @@ def get_signal_controller(
 
 
 SignalControllerDep = Annotated[SignalController, Depends(get_signal_controller)]
+
+
+def get_pair_controller(pairs: PairRepositoryDep) -> PairController:
+    return PairController(pairs=pairs)
+
+
+PairControllerDep = Annotated[PairController, Depends(get_pair_controller)]
+
+
+def get_analysis_run_controller(runs: AnalysisRunRepositoryDep) -> AnalysisRunController:
+    return AnalysisRunController(runs=runs)
+
+
+AnalysisRunControllerDep = Annotated[AnalysisRunController, Depends(get_analysis_run_controller)]
 
 
 # ── Iteration-3 services (resolved off app state) ────────────────────────────
