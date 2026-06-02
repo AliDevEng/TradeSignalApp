@@ -1,0 +1,78 @@
+# =============================================================================
+# Line-ending policy — single source of truth for the whole monorepo.
+#
+# Why this file exists: without it, Git falls back to each machine's
+# `core.autocrlf`. On Windows the installer defaults that to `true`, which
+# checks files out as CRLF and then warns "LF will be replaced by CRLF the next
+# time Git touches it" on every `git add`. This file makes the behaviour
+# deterministic and identical for every contributor (and every OS), matching the
+# `.editorconfig` (`end_of_line = lf`): text is normalised to LF in the repo
+# *and* the working tree, so there is no LF<->CRLF round trip to warn about.
+#
+# After pulling this file, convert an existing working tree in one shot with:
+#     git add --renormalize .
+# (No-op here in practice — the repo already stores LF.)
+# =============================================================================
+
+# Default: treat everything as text, auto-detect, and force LF on checkout.
+* text=auto eol=lf
+
+# --- Explicit text types (defensive; covered by the rule above too) ----------
+*.py      text eol=lf
+*.pyi     text eol=lf
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.js      text eol=lf
+*.jsx     text eol=lf
+*.mjs     text eol=lf
+*.cjs     text eol=lf
+*.json    text eol=lf
+*.jsonc   text eol=lf
+*.css     text eol=lf
+*.scss    text eol=lf
+*.html    text eol=lf
+*.md      text eol=lf
+*.mdx     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.toml    text eol=lf
+*.ini     text eol=lf
+*.cfg     text eol=lf
+*.sh      text eol=lf
+*.env     text eol=lf
+*.sql     text eol=lf
+.editorconfig text eol=lf
+
+# --- Windows-only scripts must keep CRLF to run correctly --------------------
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# --- Binary files: never convert, never diff as text -------------------------
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.webp    binary
+*.svg     text eol=lf
+*.pdf     binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.otf     binary
+*.eot     binary
+*.zip     binary
+*.gz      binary
+*.tar     binary
+*.mp4     binary
+*.mov     binary
+*.xlsx    binary
+*.db      binary
+*.sqlite3 binary
+
+# --- Generated lockfiles: text (LF) but collapse noisy diffs -----------------
+package-lock.json   text eol=lf -diff
+pnpm-lock.yaml      text eol=lf -diff
+yarn.lock           text eol=lf -diff
+poetry.lock         text eol=lf -diff
