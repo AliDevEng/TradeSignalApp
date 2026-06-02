@@ -82,13 +82,27 @@ class AnalysisRun(Base, TimestampMixin):
     )
 
     status: Mapped[AnalysisRunStatus] = mapped_column(
-        SAEnum(AnalysisRunStatus, name="analysis_run_status", native_enum=True),
+        SAEnum(
+            AnalysisRunStatus,
+            name="analysis_run_status",
+            native_enum=True,
+            # Persist the StrEnum *values* ("running"), not the member names
+            # ("RUNNING"). The Postgres enum was created with the lowercase
+            # values, so without this SQLAlchemy sends the uppercase name and
+            # Postgres rejects it as an invalid enum input.
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=AnalysisRunStatus.PENDING,
         index=True,
     )
     trigger: Mapped[AnalysisRunTrigger] = mapped_column(
-        SAEnum(AnalysisRunTrigger, name="analysis_run_trigger", native_enum=True),
+        SAEnum(
+            AnalysisRunTrigger,
+            name="analysis_run_trigger",
+            native_enum=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=AnalysisRunTrigger.SCHEDULER,
     )

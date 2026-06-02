@@ -19,6 +19,7 @@ from app.services.ai.base import (
     AnalysisContext,
     SignalDirection,
     SignalDraft,
+    TimeframeView,
 )
 from app.services.ai.groq_provider import GroqProvider
 
@@ -35,6 +36,7 @@ __all__ = [
     "GroqProvider",
     "SignalDirection",
     "SignalDraft",
+    "TimeframeView",
     "build_ai_provider",
 ]
 

@@ -124,7 +124,14 @@ class Signal(Base, TimestampMixin):
     )
 
     direction: Mapped[SignalDirection] = mapped_column(
-        SAEnum(SignalDirection, name="signal_direction", native_enum=True),
+        SAEnum(
+            SignalDirection,
+            name="signal_direction",
+            native_enum=True,
+            # Persist the StrEnum values ("buy"), not the member names ("BUY"),
+            # to match the lowercase Postgres enum created by the migration.
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
     )
     confidence: Mapped[float] = mapped_column(

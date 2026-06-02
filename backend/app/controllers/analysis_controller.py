@@ -72,8 +72,8 @@ from app.models import (
     SignalDirection,
 )
 from app.services import ServiceError
-from app.services.ai import AIProvider, AnalysisContext, SignalDraft
-from app.services.indicators import IndicatorCalculator, IndicatorSnapshot
+from app.services.ai import AIProvider, AnalysisContext, SignalDraft, TimeframeView
+from app.services.indicators import IndicatorCalculator
 from app.services.market_data import MarketDataProvider
 
 logger = logging.getLogger(__name__)
@@ -104,11 +104,16 @@ class _PairTarget:
 
 @dataclass(frozen=True, slots=True)
 class _PairOutcome:
-    """Result of analysing a single pair — success (draft + snapshot) or failure."""
+    """Result of analysing a single pair — success (draft + indicators) or failure.
+
+    ``indicators`` is the multi-timeframe snapshot keyed by timeframe
+    (``{"1h": {...}, "4h": {...}}``), persisted verbatim onto the signal so it
+    stays explainable against the exact inputs that produced it.
+    """
 
     target: _PairTarget
     draft: SignalDraft | None = None
-    snapshot: IndicatorSnapshot | None = None
+    indicators: dict[str, object] | None = None
     error: str | None = None
 
     @property
@@ -161,7 +166,13 @@ class AnalysisController:
         # Snapshot the analysis parameters once. They are recorded on the run
         # ledger for traceability, so a later config change can't retroactively
         # rewrite what a historical run actually executed.
+        #
+        # ``_timeframe`` is the primary (decision) timeframe a signal is framed
+        # on; ``_timeframes`` is the full set fed to the AI for a top-down,
+        # multi-timeframe read. Each timeframe costs one market-data call per
+        # pair per run.
         self._timeframe = settings.analysis_timeframe
+        self._timeframes = list(settings.analysis_timeframes)
         self._candle_count = settings.analysis_candle_count
 
     # ── Public API ───────────────────────────────────────────────────────────
@@ -206,11 +217,12 @@ class AnalysisController:
         started_at = self._clock()
         run_id, targets = await self._open_run(trigger, started_at)
         logger.info(
-            "Analysis run %s started (trigger=%s, pairs=%d, timeframe=%s)",
+            "Analysis run %s started (trigger=%s, pairs=%d, primary_timeframe=%s, timeframes=%s)",
             run_id,
             trigger.value,
             len(targets),
             self._timeframe,
+            ",".join(self._timeframes),
         )
 
         # The slow part: network IO across providers, owning no DB connection.
@@ -287,17 +299,32 @@ class AnalysisController:
         loud rather than masquerading as a routine partial failure.
         """
         try:
-            candles = await self._market_data.fetch_candles(
-                target.symbol,
-                timeframe=self._timeframe,
-                count=self._candle_count,
-            )
-            snapshot = self._calculator.compute(candles)
+            views: list[TimeframeView] = []
+            indicators: dict[str, object] = {}
+            # One market-data call + indicator pass per timeframe. Sequential by
+            # design: a single pair's handful of calls stays well inside the
+            # provider's per-minute budget, and any one failing fails just this
+            # pair (the run continues for the others).
+            for timeframe in self._timeframes:
+                candles = await self._market_data.fetch_candles(
+                    target.symbol,
+                    timeframe=timeframe,
+                    count=self._candle_count,
+                )
+                snapshot = self._calculator.compute(candles)
+                views.append(
+                    TimeframeView(
+                        timeframe=timeframe,
+                        indicators=snapshot,
+                        recent_candles=list(candles),
+                    )
+                )
+                indicators[timeframe] = snapshot.to_storage_dict()
+
             context = AnalysisContext(
                 symbol=target.symbol,
-                timeframe=self._timeframe,
-                indicators=snapshot,
-                recent_candles=list(candles),
+                primary_timeframe=self._timeframe,
+                views=tuple(views),
             )
             draft = await self._ai.analyze(context)
         except ServiceError as exc:
@@ -307,7 +334,7 @@ class AnalysisController:
             logger.exception("Pair %s raised an unexpected error during analysis", target.symbol)
             return _PairOutcome(target=target, error=f"{type(exc).__name__}: {exc}")
 
-        return _PairOutcome(target=target, draft=draft, snapshot=snapshot)
+        return _PairOutcome(target=target, draft=draft, indicators=indicators)
 
     # ── Phase 3: persist signals + finalise the ledger (one transaction) ─────
 
@@ -371,9 +398,9 @@ class AnalysisController:
         level the draft did not emit.
         """
         draft = outcome.draft
-        snapshot = outcome.snapshot
+        indicators = outcome.indicators
         assert draft is not None and draft.entry is not None  # invariant from emits_signal
-        assert snapshot is not None  # set on every successful outcome
+        assert indicators is not None  # set on every successful outcome
 
         tps = draft.take_profits
         take_profit: Decimal | None = tps[0] if len(tps) > 0 else None
@@ -392,7 +419,7 @@ class AnalysisController:
             take_profit_3=take_profit_3,
             timeframe=self._timeframe,
             rationale=draft.rationale,
-            indicators_snapshot=snapshot.to_storage_dict(),
+            indicators_snapshot=indicators,
             generated_at=generated_at,
             # No expiry policy is defined yet; leaving this NULL means the
             # retention sweep (``SignalRepository.delete_expired``) simply skips

@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Annotated, Literal
 
 from fastapi import Depends
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["development", "staging", "production", "test"]
@@ -71,7 +71,17 @@ class Settings(BaseSettings):
     # ── Analysis schedule ──────────────────────────────────────────────────
     analysis_interval_minutes: int = Field(default=15, ge=1, le=1440)
     analysis_candle_count: int = Field(default=200, ge=20, le=5000)
+    # The primary (decision) timeframe: the one a generated signal is framed on
+    # and recorded against. Must be one of ``analysis_timeframes``.
     analysis_timeframe: Timeframe = "1h"
+    # Every timeframe fed to the AI for a top-down, multi-timeframe read. The
+    # model sees them highest→lowest (daily trend → intraday entry). Each one
+    # costs a market-data call per pair per run, so the count is the main lever
+    # on provider cost/rate-limits. Comma-separated in .env
+    # (ANALYSIS_TIMEFRAMES=5m,15m,1h,4h,1d).
+    analysis_timeframes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["5m", "15m", "1h", "4h", "1d"]
+    )
 
     # ── Scheduler ──────────────────────────────────────────────────────────
     # Disable on API-only replicas so the analysis job runs on exactly one
@@ -90,7 +100,9 @@ class Settings(BaseSettings):
         default_factory=lambda: ["XAUUSD", "GBPUSD", "EURUSD"]
     )
 
-    @field_validator("active_pairs", "cors_allowed_origins", mode="before")
+    @field_validator(
+        "active_pairs", "cors_allowed_origins", "analysis_timeframes", mode="before"
+    )
     @classmethod
     def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):
@@ -103,6 +115,39 @@ class Settings(BaseSettings):
         if not value:
             raise ValueError("active_pairs must contain at least one trading pair")
         return [p.upper() for p in value]
+
+    @field_validator("analysis_timeframes")
+    @classmethod
+    def _validate_timeframes(cls, value: list[str]) -> list[str]:
+        """Normalise, validate, and de-duplicate the multi-timeframe list.
+
+        Each entry must be a supported ``Timeframe`` literal; an unknown value
+        is a configuration error (the market-data provider would reject it
+        anyway, but failing fast at startup is far easier to diagnose).
+        """
+        allowed = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
+        normalised = [tf.strip().lower() for tf in value]
+        if not normalised:
+            raise ValueError("analysis_timeframes must contain at least one timeframe")
+        deduped: list[str] = []
+        for tf in normalised:
+            if tf not in allowed:
+                raise ValueError(f"invalid timeframe {tf!r}; allowed: {sorted(allowed)}")
+            if tf not in deduped:
+                deduped.append(tf)
+        return deduped
+
+    @model_validator(mode="after")
+    def _primary_timeframe_in_set(self) -> "Settings":
+        """The decision timeframe must be one of the analysed timeframes.
+
+        Otherwise a signal would be recorded against a timeframe the model was
+        never shown — append it rather than reject, so a minimal config
+        (just ``analysis_timeframe``) still works without listing it twice.
+        """
+        if self.analysis_timeframe not in self.analysis_timeframes:
+            self.analysis_timeframes = [*self.analysis_timeframes, self.analysis_timeframe]
+        return self
 
     @property
     def is_development(self) -> bool:

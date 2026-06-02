@@ -25,6 +25,8 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -46,6 +48,31 @@ _PROMPT_CANDLE_WINDOW: Final[int] = 30
 
 _JSON_FENCE_RE: Final[re.Pattern[str]] = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
+# Persona/method/risk-rules live in an editable Markdown file next to this
+# module so prompt engineering can iterate without code changes; the strict
+# JSON output contract is appended from code (below) so it can never drift from
+# the ``SignalDraft`` schema it must satisfy.
+_PROMPT_DIR: Final[Path] = Path(__file__).parent / "prompts"
+_SYSTEM_PROMPT_FILE: Final[str] = "hedge_fund_analyst.md"
+
+# Relative magnitude of each timeframe, used to present them top-down
+# (highest → lowest) regardless of the order they were configured in.
+_TIMEFRAME_MINUTES: Final[dict[str, int]] = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+}
+
+
+@lru_cache(maxsize=1)
+def _load_system_persona() -> str:
+    """Read the persona prompt file once and cache it for the process."""
+    return (_PROMPT_DIR / _SYSTEM_PROMPT_FILE).read_text(encoding="utf-8").strip()
+
 
 class AIError(ServiceError):
     """Base for AI-provider failures."""
@@ -60,17 +87,33 @@ class AIResponseError(AIError):
 
 
 @dataclass(frozen=True, slots=True)
+class TimeframeView:
+    """One timeframe's evidence: its indicator snapshot + recent candles.
+
+    The unit of a multi-timeframe analysis — the model receives several of
+    these per instrument and reasons across them top-down.
+    """
+
+    timeframe: str
+    indicators: IndicatorSnapshot
+    recent_candles: list[Candle]
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisContext:
     """Everything the model needs to reason about one pair, in one place.
+
+    Carries several :class:`TimeframeView` s so the provider can perform a
+    top-down, multi-timeframe read. ``primary_timeframe`` is the decision
+    timeframe a resulting signal is framed on and recorded against.
 
     Frozen so a provider can't accidentally mutate shared inputs when the
     same context is (in future) fanned out to multiple models for comparison.
     """
 
     symbol: str
-    timeframe: str
-    indicators: IndicatorSnapshot
-    recent_candles: list[Candle]
+    primary_timeframe: str
+    views: tuple[TimeframeView, ...]
 
 
 class SignalDraft(BaseModel):
@@ -153,7 +196,7 @@ class BaseAIProvider(AIProvider):
         logger.info(
             "AI signal for %s/%s: %s (confidence=%.2f) via %s/%s",
             context.symbol,
-            context.timeframe,
+            context.primary_timeframe,
             draft.direction,
             draft.confidence,
             self.provider_name,
@@ -172,6 +215,11 @@ class BaseAIProvider(AIProvider):
     # ── Prompt construction ──────────────────────────────────────────────
 
     def _build_system_prompt(self) -> str:
+        """Editable persona (from file) + the strict JSON output contract.
+
+        The contract is built here, not in the file, so the documented keys
+        always match what :class:`SignalDraft` will accept on the way back.
+        """
         keys = ", ".join(
             [
                 '"direction" (one of "buy","sell","neutral")',
@@ -182,27 +230,44 @@ class BaseAIProvider(AIProvider):
                 '"rationale" (short string)',
             ]
         )
-        return (
-            "You are a disciplined technical analyst for FX and gold markets. "
-            "Given recent candles and pre-computed indicators, decide a single "
-            'trade stance. Be conservative: prefer "neutral" when signals '
-            "conflict. Respond with a STRICT JSON object and nothing else "
-            f"(no markdown, no prose). Required keys: {keys}. "
-            'For a "buy" or "sell", provide entry, stop_loss and at least '
-            "one take_profit consistent with the direction (for a buy: "
+        contract = (
+            "## Output contract\n"
+            "Respond with a STRICT JSON object and nothing else (no markdown, no "
+            f"prose). Required keys: {keys}. "
+            'For a "buy" or "sell", provide entry, stop_loss and at least one '
+            "take_profit consistent with the direction (for a buy: "
             "stop_loss < entry < take_profits; for a sell: the reverse). "
             'For "neutral", prices may be null.'
         )
+        return f"{_load_system_persona()}\n\n{contract}"
 
     def _build_user_prompt(self, context: AnalysisContext) -> str:
-        ind = context.indicators.model_dump(mode="json")
-        candles = self._render_candles(context.recent_candles)
+        # Present timeframes highest → lowest so the model reads bias before
+        # trigger, regardless of configured order.
+        views = sorted(
+            context.views,
+            key=lambda v: _TIMEFRAME_MINUTES.get(v.timeframe, 0),
+            reverse=True,
+        )
+        blocks = []
+        for view in views:
+            ind = view.indicators.model_dump(mode="json")
+            candles = self._render_candles(view.recent_candles)
+            primary = " — PRIMARY / decision timeframe" if (
+                view.timeframe == context.primary_timeframe
+            ) else ""
+            blocks.append(
+                f"=== Timeframe: {view.timeframe}{primary} ===\n"
+                f"Indicators (latest):\n{json.dumps(ind, indent=2, default=str)}\n\n"
+                f"Recent candles (oldest first, up to {_PROMPT_CANDLE_WINDOW}):\n{candles}"
+            )
+        order = ", ".join(v.timeframe for v in views)
         return (
             f"Instrument: {context.symbol}\n"
-            f"Timeframe: {context.timeframe}\n\n"
-            f"Indicators (latest):\n{json.dumps(ind, indent=2, default=str)}\n\n"
-            f"Recent candles (oldest first, up to {_PROMPT_CANDLE_WINDOW}):\n{candles}\n\n"
-            "Return the JSON signal now."
+            f"Primary (decision) timeframe: {context.primary_timeframe}\n"
+            f"Timeframes provided (high → low): {order}\n\n"
+            + "\n\n".join(blocks)
+            + "\n\nPerform a top-down multi-timeframe analysis and return the JSON signal now."
         )
 
     @staticmethod

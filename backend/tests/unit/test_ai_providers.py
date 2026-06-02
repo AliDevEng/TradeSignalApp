@@ -23,6 +23,7 @@ from app.services.ai import (
     AnthropicProvider,
     GroqProvider,
     SignalDraft,
+    TimeframeView,
     build_ai_provider,
 )
 from app.services.ai.base import BaseAIProvider
@@ -45,9 +46,14 @@ def _context() -> AnalysisContext:
     )
     return AnalysisContext(
         symbol="EURUSD",
-        timeframe="1h",
-        indicators=IndicatorSnapshot(last_close=1.11, rsi_14=55.0),
-        recent_candles=[candle],
+        primary_timeframe="1h",
+        views=(
+            TimeframeView(
+                timeframe="1h",
+                indicators=IndicatorSnapshot(last_close=1.11, rsi_14=55.0),
+                recent_candles=[candle],
+            ),
+        ),
     )
 
 
@@ -83,6 +89,36 @@ async def test_analyze_returns_signal_draft():
     # The prompt actually carried the instrument + indicators.
     assert "EURUSD" in provider.user
     assert "direction" in provider.system
+
+
+async def test_user_prompt_renders_all_timeframes_high_to_low():
+    candle = Candle(
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+        open=Decimal("1.10"),
+        high=Decimal("1.12"),
+        low=Decimal("1.09"),
+        close=Decimal("1.11"),
+    )
+    context = AnalysisContext(
+        symbol="XAUUSD",
+        primary_timeframe="1h",
+        # Deliberately out of order to prove the prompt re-sorts high→low.
+        views=(
+            TimeframeView(timeframe="5m", indicators=IndicatorSnapshot(), recent_candles=[candle]),
+            TimeframeView(timeframe="1d", indicators=IndicatorSnapshot(), recent_candles=[candle]),
+            TimeframeView(timeframe="1h", indicators=IndicatorSnapshot(), recent_candles=[candle]),
+        ),
+    )
+    provider = _FakeProvider(_VALID_BUY)
+    await provider.analyze(context)
+
+    user = provider.user
+    # Every timeframe appears, the primary is flagged, and 1d is rendered
+    # before 5m (top-down order, not config order).
+    assert "Timeframe: 1d" in user
+    assert "Timeframe: 1h — PRIMARY" in user
+    assert "Timeframe: 5m" in user
+    assert user.index("Timeframe: 1d") < user.index("Timeframe: 5m")
 
 
 async def test_analyze_rejects_directional_signal_without_entry():

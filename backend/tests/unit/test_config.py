@@ -153,6 +153,37 @@ def test_invalid_timeframe_rejected():
         Settings(**_base_env({"analysis_timeframe": "2h"}), _env_file=None)
 
 
+# ── analysis_timeframes parsing/validation ──────────────────────────────────
+
+
+def test_analysis_timeframes_default():
+    s = Settings(**_base_env(), _env_file=None)
+    assert s.analysis_timeframes == ["5m", "15m", "1h", "4h", "1d"]
+
+
+def test_analysis_timeframes_parses_csv_and_lowercases():
+    s = Settings(**_base_env({"analysis_timeframes": "1D, 4H , 1h"}), _env_file=None)
+    assert s.analysis_timeframes == ["1d", "4h", "1h"]
+
+
+def test_analysis_timeframes_dedupes():
+    s = Settings(**_base_env({"analysis_timeframes": "1h,1h,4h"}), _env_file=None)
+    assert s.analysis_timeframes == ["1h", "4h"]
+
+
+def test_analysis_timeframes_rejects_unknown():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"analysis_timeframes": "1h,2h"}), _env_file=None)
+
+
+def test_primary_timeframe_appended_when_missing():
+    s = Settings(
+        **_base_env({"analysis_timeframe": "1h", "analysis_timeframes": "4h,1d"}),
+        _env_file=None,
+    )
+    assert "1h" in s.analysis_timeframes
+
+
 def test_invalid_interval_rejected():
     with pytest.raises(ValidationError):
         Settings(**_base_env({"analysis_interval_minutes": "0"}), _env_file=None)

@@ -180,7 +180,11 @@ def _patch_repositories(monkeypatch):
 
 
 def _build(store: Store, *, market_data=None, ai=None) -> AnalysisController:
-    settings = SimpleNamespace(analysis_timeframe="1h", analysis_candle_count=200)
+    settings = SimpleNamespace(
+        analysis_timeframe="1h",
+        analysis_timeframes=["1h"],
+        analysis_candle_count=200,
+    )
     return AnalysisController(
         database=_FakeDatabase(store),  # type: ignore[arg-type]
         market_data=market_data or _FakeMarketData(),  # type: ignore[arg-type]
@@ -363,7 +367,8 @@ async def test_signal_carries_provenance_and_snapshot():
     (signal,) = store.signals
     assert signal.pair_id == 5
     assert signal.ai_provider == "groq"
-    assert signal.indicators_snapshot == {"rsi": 30.0}
+    # Indicators are now keyed by timeframe (one entry per analysed timeframe).
+    assert signal.indicators_snapshot == {"1h": {"rsi": 30.0}}
     assert signal.timeframe == "1h"
 
 
