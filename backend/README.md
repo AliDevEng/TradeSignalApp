@@ -220,6 +220,19 @@ The health endpoint round-trips a `SELECT 1` to surface DB reachability:
 - `database.status == "ok"` → pool reachable
 - `database.status == "down"` → connect/select failed → overall status downgrades to `down`
 
+For a local PostgreSQL-on-Windows setup, use the project-owned bootstrap files
+in `db/`:
+
+```powershell
+cd backend
+psql -U postgres -d postgres -f .\db\create_local_database.sql
+alembic upgrade head
+psql -U tradesignal_app -d tradesignal -f .\db\seed_pairs.sql
+psql -U tradesignal_app -d tradesignal -f .\db\check_database.sql
+```
+
+Full step-by-step instructions are in `db/README.md`.
+
 ### Migrations (Iteration 2.3 deliverable)
 
 Alembic owns the schema lifecycle. The configuration lives at the

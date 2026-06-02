@@ -46,7 +46,12 @@ class SignalResponse(BaseModel):
 
     entry_price: Decimal
     stop_loss: Decimal | None = None
+    # The take-profit ladder, ordered TP1..TP3. ``take_profit`` is the primary
+    # target (TP1); the secondary scale-out targets are nullable because a
+    # signal may carry fewer than three.
     take_profit: Decimal | None = None
+    take_profit_2: Decimal | None = None
+    take_profit_3: Decimal | None = None
 
     timeframe: str
     rationale: str | None = None

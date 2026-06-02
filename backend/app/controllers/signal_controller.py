@@ -137,6 +137,8 @@ class SignalController:
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,
             take_profit=signal.take_profit,
+            take_profit_2=signal.take_profit_2,
+            take_profit_3=signal.take_profit_3,
             timeframe=signal.timeframe,
             rationale=signal.rationale,
             indicators_snapshot=signal.indicators_snapshot,

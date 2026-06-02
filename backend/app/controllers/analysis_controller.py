@@ -364,19 +364,21 @@ class AnalysisController:
         ``emits_signal`` has already guaranteed a directional draft with an entry,
         so the asserts below are invariants, not user-facing validation.
 
-        Note on take-profits: a ``SignalDraft`` carries up to three levels
-        (TP1/TP2/TP3) but the current ``signals`` schema has a single
-        ``take_profit`` column, so only the primary target (TP1) is persisted
-        here. Surfacing all three is a schema change (extra columns or a child
-        table) and is intentionally out of scope for this point — flagged as a
-        deliberate follow-up rather than left as a silent data loss.
+        Note on take-profits: a ``SignalDraft`` carries up to three ordered
+        levels (TP1..TP3). The ``signals`` schema stores the full ladder across
+        ``take_profit`` (TP1), ``take_profit_2`` (TP2) and ``take_profit_3``
+        (TP3); we map each level positionally and leave the columns NULL for any
+        level the draft did not emit.
         """
         draft = outcome.draft
         snapshot = outcome.snapshot
         assert draft is not None and draft.entry is not None  # invariant from emits_signal
         assert snapshot is not None  # set on every successful outcome
 
-        take_profit: Decimal | None = draft.take_profits[0] if draft.take_profits else None
+        tps = draft.take_profits
+        take_profit: Decimal | None = tps[0] if len(tps) > 0 else None
+        take_profit_2: Decimal | None = tps[1] if len(tps) > 1 else None
+        take_profit_3: Decimal | None = tps[2] if len(tps) > 2 else None
 
         return Signal(
             pair_id=outcome.target.id,
@@ -386,6 +388,8 @@ class AnalysisController:
             entry_price=draft.entry,
             stop_loss=draft.stop_loss,
             take_profit=take_profit,
+            take_profit_2=take_profit_2,
+            take_profit_3=take_profit_3,
             timeframe=self._timeframe,
             rationale=draft.rationale,
             indicators_snapshot=snapshot.to_storage_dict(),

@@ -78,6 +78,14 @@ class Signal(Base, TimestampMixin):
             "take_profit IS NULL OR take_profit > 0",
             name="take_profit_positive_when_set",
         ),
+        CheckConstraint(
+            "take_profit_2 IS NULL OR take_profit_2 > 0",
+            name="take_profit_2_positive_when_set",
+        ),
+        CheckConstraint(
+            "take_profit_3 IS NULL OR take_profit_3 > 0",
+            name="take_profit_3_positive_when_set",
+        ),
         # A single run produces at most one signal per pair. NULLs in
         # `analysis_run_id` (manual signals, or runs that have since
         # been deleted) are treated as distinct by Postgres, so this
@@ -130,7 +138,17 @@ class Signal(Base, TimestampMixin):
     stop_loss: Mapped[Decimal | None] = mapped_column(
         Numeric(PRICE_PRECISION, PRICE_SCALE), nullable=True
     )
+    # `take_profit` is TP1, the primary target. `take_profit_2`/`_3` are the
+    # secondary scale-out targets the AI emits (ordered TP1..TP3). All three
+    # are nullable: a signal may carry fewer than three targets, and the
+    # persistence layer fills only the ones the AI returned.
     take_profit: Mapped[Decimal | None] = mapped_column(
+        Numeric(PRICE_PRECISION, PRICE_SCALE), nullable=True
+    )
+    take_profit_2: Mapped[Decimal | None] = mapped_column(
+        Numeric(PRICE_PRECISION, PRICE_SCALE), nullable=True
+    )
+    take_profit_3: Mapped[Decimal | None] = mapped_column(
         Numeric(PRICE_PRECISION, PRICE_SCALE), nullable=True
     )
 

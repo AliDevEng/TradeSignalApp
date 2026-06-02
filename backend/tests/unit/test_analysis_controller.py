@@ -327,15 +327,31 @@ async def test_finalisation_failure_marks_run_failed_and_reraises():
 # ── Signal mapping detail ────────────────────────────────────────────────────
 
 
-async def test_only_first_take_profit_is_persisted():
-    """Schema has a single take_profit column → only TP1 is stored (by design)."""
+async def test_full_take_profit_ladder_is_persisted():
+    """All emitted TP levels map positionally onto take_profit/_2/_3."""
     store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
-    ctrl = _build(store, ai=_FakeAI(draft=_buy_draft(tps=("1.12000000", "1.15000000"))))
+    tps = ("1.12000000", "1.15000000", "1.18000000")
+    ctrl = _build(store, ai=_FakeAI(draft=_buy_draft(tps=tps)))
 
     await ctrl.run_analysis()
 
     (signal,) = store.signals
     assert signal.take_profit == Decimal("1.12000000")
+    assert signal.take_profit_2 == Decimal("1.15000000")
+    assert signal.take_profit_3 == Decimal("1.18000000")
+
+
+async def test_missing_take_profit_levels_are_null():
+    """A draft with fewer than three targets leaves the higher levels NULL."""
+    store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
+    ctrl = _build(store, ai=_FakeAI(draft=_buy_draft(tps=("1.12000000",))))
+
+    await ctrl.run_analysis()
+
+    (signal,) = store.signals
+    assert signal.take_profit == Decimal("1.12000000")
+    assert signal.take_profit_2 is None
+    assert signal.take_profit_3 is None
 
 
 async def test_signal_carries_provenance_and_snapshot():

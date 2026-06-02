@@ -170,7 +170,13 @@ def test_signal_columns_have_expected_types():
     assert isinstance(cols["confidence"].type, Numeric)
     assert cols["confidence"].nullable is False
 
-    for price_col in ("entry_price", "stop_loss", "take_profit"):
+    for price_col in (
+        "entry_price",
+        "stop_loss",
+        "take_profit",
+        "take_profit_2",
+        "take_profit_3",
+    ):
         assert isinstance(cols[price_col].type, Numeric), price_col
         assert cols[price_col].type.precision == 20
         assert cols[price_col].type.scale == 8
@@ -178,6 +184,8 @@ def test_signal_columns_have_expected_types():
     assert cols["entry_price"].nullable is False
     assert cols["stop_loss"].nullable is True
     assert cols["take_profit"].nullable is True
+    assert cols["take_profit_2"].nullable is True
+    assert cols["take_profit_3"].nullable is True
 
     assert isinstance(cols["timeframe"].type, String)
     assert isinstance(cols["rationale"].type, Text)
@@ -210,6 +218,8 @@ def test_signal_check_constraints_present():
     assert "ck_signals_entry_price_positive" in constraint_names
     assert "ck_signals_stop_loss_positive_when_set" in constraint_names
     assert "ck_signals_take_profit_positive_when_set" in constraint_names
+    assert "ck_signals_take_profit_2_positive_when_set" in constraint_names
+    assert "ck_signals_take_profit_3_positive_when_set" in constraint_names
 
 
 def test_signal_unique_constraint_per_run_per_pair():
