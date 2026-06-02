@@ -40,6 +40,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import Settings
 from app.controllers import ResourceNotFoundError
+from app.database import DatabaseConnectionError
 from app.schemas.common import ErrorDetail, ErrorResponse
 from app.services import ServiceError
 from app.services.market_data import RateLimitError
@@ -108,14 +109,20 @@ async def _service_error_handler(request: Request, exc: ServiceError) -> JSONRes
 # ── Infrastructure ───────────────────────────────────────────────────────────
 
 
-async def _database_unavailable_handler(request: Request, exc: OperationalError) -> JSONResponse:
+async def _database_unavailable_handler(
+    request: Request, exc: OperationalError | DatabaseConnectionError
+) -> JSONResponse:
     """A database *connection/operational* failure → 503, not a blanket 500.
 
-    ``OperationalError`` is SQLAlchemy's category for "couldn't reach / talk to
-    the database" (connection refused, server closed the connection, timeout) —
-    distinct from a programming error in a query. Surfacing it as 503 tells the
-    client this is transient and retryable rather than a bug. SQL/connection
-    detail is logged, never returned.
+    Two shapes map here. ``OperationalError`` is SQLAlchemy's driver-agnostic
+    category for "couldn't reach / talk to the database" (connection refused,
+    server closed the connection, timeout). ``DatabaseConnectionError`` is the
+    :class:`~app.database.Database` adapter's normalisation of driver-specific
+    connection failures that escape *unwrapped* (notably asyncpg dropping a
+    pooled connection mid-operation) — both are transient and retryable, as
+    distinct from a programming error in a query. Surfacing them as 503 tells the
+    client to retry rather than treating it as a bug. Connection detail is
+    logged, never returned.
     """
     logger.exception("Database operational error on %s %s", request.method, request.url.path)
     return _error_response(
@@ -181,6 +188,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ResourceNotFoundError, _not_found_handler)
     app.add_exception_handler(ServiceError, _service_error_handler)
     app.add_exception_handler(OperationalError, _database_unavailable_handler)
+    app.add_exception_handler(DatabaseConnectionError, _database_unavailable_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)

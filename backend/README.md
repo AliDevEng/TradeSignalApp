@@ -60,10 +60,10 @@ pip install -r requirements-dev.txt
 - [x] (3) Add validation and error-handling strategy
 
 ### Iteration 5 - Quality + Delivery (12 points)
-- [ ] (4) Unit tests for controllers/services
-- [ ] (3) Integration tests for core routes
-- [ ] (3) Lint and static checks
-- [ ] (2) Docker polish + runtime docs
+- [x] (4) Unit tests for controllers/services
+- [x] (3) Integration tests for core routes
+- [x] (3) Lint and static checks
+- [ ] (2) Docker polish + runtime docs *(deferred — revisited once the deployment target is settled)*
 
 **Total: 85 points** 🚀
 
@@ -502,6 +502,7 @@ vocabulary (`ErrorCode`):
 | `RateLimitError` | 429 | `RATE_LIMITED` | generic "retry shortly" |
 | `ServiceError` (other) | 503 | `SERVICE_UNAVAILABLE` | generic; cause logged |
 | `OperationalError` (DB) | 503 | `SERVICE_UNAVAILABLE` | generic; cause logged |
+| `DatabaseConnectionError` | 503 | `SERVICE_UNAVAILABLE` | generic; cause logged |
 | `HTTPException` | as-is | `HTTP_{code}` | framework detail |
 | any other `Exception` | 500 | `INTERNAL_ERROR` | message **only in dev** |
 
@@ -511,6 +512,58 @@ database failures return a generic message and log the real cause — provider
 error text and SQL never reach the client. `OperationalError` (couldn't reach
 the database) is surfaced as a retryable `503` rather than a blanket `500`, and
 unexpected exceptions only reveal their message in development.
+
+Database-unreachable comes in two shapes, and both must land on the same `503`.
+SQLAlchemy's `OperationalError` covers the *wrapped*, driver-agnostic case, but
+asyncpg can also raise its own `PostgresConnectionError` **unwrapped** when a
+pooled connection dies mid-operation — that is neither a SQLAlchemy
+`OperationalError` nor even a `DBAPIError`, so a handler keyed on those alone
+would let it fall through to a misleading `500`. Rather than teach the HTTP layer
+about the driver, the `Database` adapter (the one module that owns asyncpg)
+normalises connection-level failures to a framework-agnostic
+`DatabaseConnectionError`; the error layer maps that to `503` with a driver-free
+import. Query/programming errors are deliberately *not* normalised — they are
+bugs, not transient outages, and must keep their `500`.
+
+### Quality: controller/route tests (Iteration 5 deliverable)
+
+Iteration 5 closes the test gap the earlier iterations left for the business
+layer, and pins the HTTP contract end-to-end — without ever requiring a live
+Postgres or a real provider network call. The strategy mirrors the layering:
+test each layer against the seam below it.
+
+* **Read controllers — unit, mocked repositories.** `SignalController`,
+  `PairController` and `AnalysisRunController` are exercised against `AsyncMock`
+  repositories. Their job is orchestration (resolve a symbol → id, drive the
+  repos, map ORM → wire, raise `ResourceNotFoundError` for unknown ids), all of
+  which is observable through the calls they make and the schemas they return.
+  Tests assert the empty-page short-circuit, the status-literal → ORM-enum cast,
+  unknown-resource 404 semantics, and that `Decimal` money survives the mapping.
+
+* **`AnalysisController` — unit, in-memory persistence.** The orchestrator is the
+  hardest to test (three transactions wrapped around fan-out network IO), so the
+  three repository classes are swapped at the module boundary for in-memory fakes
+  backed by a shared store, and the `Database`/providers are injected fakes. This
+  pins the contract that actually matters: which terminal status each outcome mix
+  yields (`SUCCESS`/`PARTIAL`/`FAILED`), that a `neutral` draft is a successful
+  no-signal, that one pair's failure (expected *or* unexpected) never discards
+  the others' signals, that only TP1 is persisted, and that a finalisation blip
+  stamps the stuck run `FAILED` and re-raises.
+
+* **Routes — integration, stubbed controllers.** Every v1 route is driven through
+  the real ASGI app (envelope shaping, pagination meta, the central
+  `ResourceNotFoundError` → 404 and `DatabaseConnectionError` → 503 mapping, the
+  `202` + background-task dispatch for the manual trigger) with the controllers
+  overridden via `app.dependency_overrides`. This tests the view layer's actual
+  responsibility — HTTP translation — without re-testing business logic or
+  touching a database.
+
+Test doubles live in `tests/_stubs.py` (the `FakeDatabase`) and
+`tests/_factories.py` (transient ORM builders); both are underscored so pytest
+does not collect them. **Live-Postgres round-trips and real provider network
+calls remain deliberately deferred** (see the note under the verification
+status) — these tests deepen confidence in the logic and the wire contract, not
+the infrastructure bindings.
 
 ## 🧪 Run
 ```bash
@@ -533,36 +586,52 @@ API docs in development:
 # MockTransport: retries, error mapping, symbol/interval mapping), indicator
 # calculator (structure, NaN handling, determinism), AI providers (prompt,
 # JSON extraction, validation, SDK error wrapping), scheduler lifecycle, and
-# the lifespan service wiring.
+# the lifespan service wiring; and Iteration 5's controller unit tests
+# (read controllers + the analysis orchestrator) and route integration tests.
 pytest
 
 # Lint + format
 ruff check .
 ruff format --check .
+
+# Static type check (basic mode; config in pyrightconfig.json)
+pyright
 ```
 
-### ✅ Verification status (Iterations 1, 2 & 3)
-Last verified on 2026-05-31:
-- `pytest` — **208 passed** (135 from Iterations 1–2, +73 for Iteration 3)
+### ✅ Verification status (Iterations 1–5)
+Last verified on 2026-06-02:
+- `pytest` — **274 passed** (208 from Iterations 1–3, +66 added in Iteration 5:
+  controller unit tests, route integration tests, and the DB-connection-error
+  normalisation tests — covering Iteration 4's controllers/routes)
 - `ruff check .` — clean
-- `ruff format --check .` — clean (67 files)
+- `ruff format --check .` — clean (78 files)
 - `create_app()` boots and registers `GET /api/v1/health`
 - `alembic upgrade head --sql` renders the full schema with the three native
   enums created before the tables that reference them
 - Lifespan integration test: scheduler starts, providers construct, health
   reports all components `ok`, and shutdown stops the scheduler and closes
   every client
-- End-to-end composition (mock market data → indicators → AI context →
-  parsed `SignalDraft`) verified by hand against the real types
+- **Live smoke test (no database running):** the server boots, the scheduler
+  starts, `GET /api/v1/health` returns `200` with `database: down`, request
+  validation returns structured `422`s, an unknown route returns the `404`
+  envelope, and a request that needs the database returns a retryable **`503`**
+  (`SERVICE_UNAVAILABLE`) — the regression fixed this iteration, where a raw
+  unwrapped asyncpg connection error previously surfaced as a misleading `500`
 
 > **Deferred to later iterations on purpose:** live-Postgres round-trips and
 > real Twelve Data / Groq / Anthropic network calls. The AI and market-data
 > integrations are exercised with injected fake SDK clients and
-> `httpx.MockTransport`; the pipeline orchestration that persists signals is
-> the Iteration-4 controller (the scheduled job currently runs a
-> self-announcing placeholder). With no database reachable,
-> `Database.healthcheck()` degrades gracefully to `False` rather than raising —
-> confirmed at runtime.
+> `httpx.MockTransport`; controller and route logic is tested against mocked
+> repositories, in-memory persistence fakes, and `app.dependency_overrides` (see
+> "Quality: controller/route tests" above). With no database reachable,
+> `Database.healthcheck()` degrades gracefully to `False` rather than raising,
+> and a request that reaches the database returns `503` rather than `500` —
+> both confirmed at runtime.
+>
+> `pyright` runs in `basic` mode for editor/CI type feedback; the enforced
+> green gate is `pytest` + `ruff` (a handful of known FastAPI
+> `add_exception_handler` and SQLAlchemy/pandas typing-stub frictions remain in
+> pre-existing code).
 
 ## 🔐 Env
 Copy `.env.example` to `.env` and fill in the values:

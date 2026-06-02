@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import text
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -26,6 +27,36 @@ from sqlalchemy.ext.asyncio import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class DatabaseConnectionError(Exception):
+    """The database could not be reached (connect refused, dropped mid-query, …).
+
+    A framework-agnostic marker so the HTTP layer can map "can't talk to the
+    database" onto a retryable 503 **without importing the driver**. It exists
+    because the raw failure shape is driver-specific: asyncpg can raise its own
+    ``PostgresConnectionError`` *unwrapped* (e.g. when a pooled connection dies
+    mid-operation), which is neither a SQLAlchemy ``OperationalError`` nor even a
+    ``DBAPIError`` — so a handler keyed on those alone would miss it and the
+    request would surface as a misleading 500. The :class:`Database` adapter is
+    the one place that owns the driver, so it is the right place to normalise.
+    """
+
+
+# Connection-level failures we translate to :class:`DatabaseConnectionError`.
+# SQLAlchemy's ``OperationalError``/``InterfaceError`` are driver-agnostic and
+# cover the *wrapped* cases for any backend; asyncpg's own connection-error bases
+# are added (best-effort) to catch the *unwrapped* escapes specific to it. A
+# missing asyncpg import (e.g. a future driver swap) degrades gracefully to the
+# SQLAlchemy-only set rather than breaking construction.
+_CONNECTION_ERROR_TYPES: tuple[type[BaseException], ...] = (OperationalError, InterfaceError)
+try:  # pragma: no cover - import guard for an optional driver
+    from asyncpg import InterfaceError as _AsyncpgInterfaceError
+    from asyncpg import PostgresConnectionError as _AsyncpgConnectionError
+
+    _CONNECTION_ERROR_TYPES += (_AsyncpgConnectionError, _AsyncpgInterfaceError)
+except ImportError:  # pragma: no cover
+    pass
 
 
 class Database:
@@ -78,13 +109,36 @@ class Database:
         when a unit of work is complete; this context manager only
         guarantees cleanup. Used both by the FastAPI request dependency
         and by background jobs / one-off scripts.
+
+        Connection-level failures (the database is unreachable, or a pooled
+        connection died mid-operation) are normalised to
+        :class:`DatabaseConnectionError` so callers — and the HTTP error layer —
+        get one stable, retryable signal instead of a driver-specific exception
+        that may slip past a SQLAlchemy-keyed handler. Query/programming errors
+        are left untouched: they are bugs, not transient outages.
         """
-        async with self._session_factory() as session:
-            try:
-                yield session
-            except Exception:
-                await session.rollback()
-                raise
+        try:
+            async with self._session_factory() as session:
+                try:
+                    yield session
+                except Exception:
+                    await self._safe_rollback(session)
+                    raise
+        except _CONNECTION_ERROR_TYPES as exc:
+            raise DatabaseConnectionError(str(exc)) from exc
+
+    @staticmethod
+    async def _safe_rollback(session: AsyncSession) -> None:
+        """Roll back without letting a rollback failure mask the original error.
+
+        When the connection is already dead the rollback itself can raise; that
+        secondary failure must not replace the real cause the caller needs to
+        see, so it is logged and swallowed.
+        """
+        try:
+            await session.rollback()
+        except Exception:
+            logger.warning("Rollback failed after a session error", exc_info=True)
 
     async def healthcheck(self) -> bool:
         """Round-trip a `SELECT 1` to confirm the pool can reach the database."""

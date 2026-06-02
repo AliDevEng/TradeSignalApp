@@ -12,7 +12,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from app.database import Database
+from app.database import Database, DatabaseConnectionError
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 DUMMY_URL = "postgresql+asyncpg://user:pw@localhost:5432/test"
@@ -106,6 +107,80 @@ async def test_session_rolls_back_on_exception():
 
     session.rollback.assert_awaited_once()
     session.__aexit__.assert_awaited_once()
+
+
+# ── session() connection-error normalisation ───────────────────────────────
+
+
+async def test_session_normalises_sqlalchemy_operational_error():
+    """A SQLAlchemy OperationalError (any driver) surfaces as the framework-
+    agnostic DatabaseConnectionError so the HTTP layer can map it to 503."""
+    db = Database(DUMMY_URL)
+    session = _make_session_mock()
+    operr = OperationalError("SELECT 1", None, Exception("connection refused"))
+
+    with _patch_session_factory(db, session):
+        with pytest.raises(DatabaseConnectionError):
+            async with db.session():
+                raise operr
+
+    session.rollback.assert_awaited_once()
+
+
+async def test_session_normalises_unwrapped_asyncpg_connection_error():
+    """The bug this fix targets: asyncpg can raise its own connection error
+    *unwrapped* (not a SQLAlchemy error at all). It must still normalise."""
+    from asyncpg.exceptions import ConnectionDoesNotExistError
+
+    db = Database(DUMMY_URL)
+    session = _make_session_mock()
+
+    with _patch_session_factory(db, session):
+        with pytest.raises(DatabaseConnectionError):
+            async with db.session():
+                raise ConnectionDoesNotExistError("connection was closed in the middle")
+
+
+async def test_session_preserves_chain_on_normalisation():
+    db = Database(DUMMY_URL)
+    session = _make_session_mock()
+    operr = OperationalError("SELECT 1", None, Exception("down"))
+
+    with _patch_session_factory(db, session):
+        with pytest.raises(DatabaseConnectionError) as exc_info:
+            async with db.session():
+                raise operr
+
+    # The original cause is preserved for server-side diagnosis.
+    assert exc_info.value.__cause__ is operr
+
+
+async def test_session_leaves_non_connection_errors_untouched():
+    """A programming/query bug is not a transient outage — it must propagate
+    as-is, never masquerade as a retryable connection error."""
+    db = Database(DUMMY_URL)
+    session = _make_session_mock()
+
+    with _patch_session_factory(db, session):
+        with pytest.raises(ValueError, match="bad query"):
+            async with db.session():
+                raise ValueError("bad query")
+
+
+async def test_session_rollback_failure_does_not_mask_original_error():
+    """If the connection is dead the rollback can fail too; that secondary
+    failure must not replace the real cause."""
+    db = Database(DUMMY_URL)
+    session = _make_session_mock()
+    session.rollback = AsyncMock(side_effect=Exception("rollback also failed"))
+    operr = OperationalError("SELECT 1", None, Exception("down"))
+
+    with _patch_session_factory(db, session):
+        with pytest.raises(DatabaseConnectionError):
+            async with db.session():
+                raise operr
+
+    session.rollback.assert_awaited_once()
 
 
 # ── healthcheck() ──────────────────────────────────────────────────────────

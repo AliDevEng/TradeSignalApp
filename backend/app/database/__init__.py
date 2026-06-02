@@ -5,6 +5,6 @@ lifecycle ops and pull request-scoped sessions through the FastAPI
 dependencies in `app.dependencies` (`DatabaseDep`, `DBSessionDep`).
 """
 
-from app.database.connection import Database
+from app.database.connection import Database, DatabaseConnectionError
 
-__all__ = ["Database"]
+__all__ = ["Database", "DatabaseConnectionError"]
