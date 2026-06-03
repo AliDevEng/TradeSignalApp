@@ -185,6 +185,25 @@ async def test_analyze_rejects_neutral_signal():
 # ── _extract_json ────────────────────────────────────────────────────────────
 
 
+def test_round_indicators_trims_human_scale_but_keeps_sub_unit_precision():
+    rounded = BaseAIProvider._round_indicators(
+        {
+            "rsi_14": 33.04176178,
+            "ema_200": 2338.512,
+            "atr_14": 0.00143217,
+            "macd": -0.00071,
+            "candles_analyzed": 200,
+            "as_of": "2026-06-03",
+        }
+    )
+    assert rounded["rsi_14"] == 33.04  # human-scale → 2 decimals
+    assert rounded["ema_200"] == 2338.51
+    assert rounded["atr_14"] == 0.001432  # sub-unit value keeps precision
+    assert rounded["macd"] == -0.00071
+    assert rounded["candles_analyzed"] == 200  # ints untouched
+    assert rounded["as_of"] == "2026-06-03"  # non-numbers untouched
+
+
 def test_extract_json_plain_object():
     assert BaseAIProvider._extract_json('{"a": 1}') == {"a": 1}
 

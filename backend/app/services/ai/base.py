@@ -294,7 +294,7 @@ class BaseAIProvider(AIProvider):
         )
         blocks = []
         for view in views:
-            ind = view.indicators.model_dump(mode="json")
+            ind = self._round_indicators(view.indicators.model_dump(mode="json"))
             candles = self._render_candles(view.recent_candles)
             primary = (
                 " — PRIMARY / decision timeframe"
@@ -343,6 +343,24 @@ class BaseAIProvider(AIProvider):
             f"{one('SCALP', context.current_scalp)}\n"
             f"{one('SWING', context.current_swing)}"
         )
+
+    @staticmethod
+    def _round_indicators(indicators: dict[str, Any]) -> dict[str, Any]:
+        """Trim indicator floats before they reach the model.
+
+        Indicator values carry full float precision (e.g. RSI 33.04176178), and
+        the model tends to quote them verbatim in its rationale. Rounding here
+        keeps cited numbers readable. Human-scale values (RSI, MACD/EMA on gold,
+        prices) are capped at 2 decimals; sub-unit values (ATR/MACD on FX,
+        ``bb_percent``) keep more precision so they don't collapse to ``0.0``.
+        """
+
+        def _round(value: Any) -> Any:
+            if isinstance(value, float):
+                return round(value, 2) if abs(value) >= 1 else round(value, 6)
+            return value
+
+        return {key: _round(value) for key, value in indicators.items()}
 
     @staticmethod
     def _render_candles(candles: list[Candle]) -> str:

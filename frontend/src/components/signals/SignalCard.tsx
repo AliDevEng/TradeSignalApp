@@ -5,7 +5,6 @@ import { Brain, Clock3, ShieldCheck, Target } from "lucide-react";
 import { SignalBadge, SignalStatusBadge, TradeStyleBadge } from "@/components/signals/SignalBadge";
 import { Card } from "@/components/ui/Card";
 import { formatPercent, formatPrice, formatTime, getPricePrecision } from "@/lib/formatters";
-import { getPrimaryTarget } from "@/lib/trading";
 import { cn } from "@/lib/utils";
 import type { Signal } from "@/types/signal";
 
@@ -19,7 +18,6 @@ type SignalCardProps = {
 export const SignalCard = memo(function SignalCard({ signal, density }: SignalCardProps) {
   const precision = getPricePrecision(signal.symbol);
   const isCompact = density === "compact";
-  const primaryTarget = getPrimaryTarget(signal);
 
   return (
     <Card className="overflow-hidden transition-colors hover:border-[#6f5620]">
@@ -48,7 +46,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
             </Link>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <div className="rounded-md border border-[#2a3445] bg-[#0e141e] px-3 py-2">
               <p className="text-xs font-medium text-[var(--muted)]">Confidence</p>
               <p className="mt-1 text-lg font-semibold text-[var(--gold-strong)]">
@@ -56,13 +54,9 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
               </p>
             </div>
             <div className="rounded-md border border-[#2a3445] bg-[#0e141e] px-3 py-2">
-              <p className="text-xs font-medium text-[var(--muted)]">Frame</p>
-              <p className="mt-1 text-lg font-semibold text-[#fff8df]">{signal.timeframe}</p>
-            </div>
-            <div className="rounded-md border border-[#2a3445] bg-[#0e141e] px-3 py-2">
               <p className="text-xs font-medium text-[var(--muted)]">R:R</p>
               <p className="mt-1 text-lg font-semibold text-[var(--blue-strong)]">
-                {signal.riskReward ? signal.riskReward.toFixed(2) : "Hold"}
+                {signal.riskReward ? `${signal.riskReward.toFixed(2)} : 1` : "Hold"}
               </p>
             </div>
           </div>
@@ -91,11 +85,22 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
             <div className="rounded-md border border-[#244d7d] bg-[var(--blue-soft)] p-3">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
                 <Brain className="h-3.5 w-3.5 text-[var(--blue-strong)]" />
-                Target
+                Targets
               </div>
-              <p className="mt-2 text-lg font-semibold text-[#fff8df]">
-                {primaryTarget ? formatPrice(primaryTarget, precision) : "Pending"}
-              </p>
+              {signal.targets.length > 0 ? (
+                <ul className="mt-2 space-y-1">
+                  {signal.targets.map((target) => (
+                    <li key={target.label} className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs font-medium text-[var(--muted)]">{target.label}</span>
+                      <span className="text-sm font-semibold text-[#fff8df]">
+                        {formatPrice(target.price, precision)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-lg font-semibold text-[#fff8df]">Pending</p>
+              )}
             </div>
           </div>
 
