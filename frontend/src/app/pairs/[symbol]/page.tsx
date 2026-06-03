@@ -1,17 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, BarChart3, Clock3, Layers3 } from "lucide-react";
 import { notFound } from "next/navigation";
 
-import { CandlestickChart } from "@/components/charts/CandlestickChart";
+import { SignalLevelMap } from "@/components/charts/SignalLevelMap";
 import { SignalBadge, SignalStatusBadge } from "@/components/signals/SignalBadge";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDateTime, formatPercent } from "@/lib/formatters";
 import { mapApiPair, mapApiSignal } from "@/lib/signalMappers";
-import {
-  getCandlesForPair,
-  getSignalsForPair,
-  getTradingPairBySymbol
-} from "@/lib/mockSignals";
+import { getSignalsForPair, getTradingPairBySymbol } from "@/lib/mockSignals";
 import { getPair, getPairSignals } from "@/services/tradeService";
 import type { Signal, TradingPair } from "@/types/signal";
 
@@ -20,6 +18,16 @@ type PairDetailPageProps = {
     symbol: string;
   }>;
 };
+
+export async function generateMetadata({ params }: PairDetailPageProps): Promise<Metadata> {
+  const { symbol } = await params;
+  const upper = symbol.toUpperCase();
+
+  return {
+    title: upper,
+    description: `Execution map, indicator context, and signal queue for ${upper}.`
+  };
+}
 
 type PairDetailData = {
   pair: TradingPair;
@@ -60,7 +68,6 @@ export default async function PairDetailPage({ params }: PairDetailPageProps) {
 
   const { pair, signals: pairSignals } = data;
   const activeSignal = pairSignals.find((signal) => signal.status === "active") ?? pairSignals[0];
-  const candles = getCandlesForPair(pair.symbol);
 
   return (
     <div className="flex flex-col gap-6">
@@ -88,12 +95,18 @@ export default async function PairDetailPage({ params }: PairDetailPageProps) {
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
-          <CandlestickChart
-            candles={candles}
-            signal={activeSignal}
-            subtitle="Recent price action with active signal execution levels layered directly on chart."
-            title={`${pair.symbol} market structure`}
-          />
+          {activeSignal ? (
+            <SignalLevelMap
+              signal={activeSignal}
+              subtitle="Active signal execution levels mapped against indicator reference levels for this pair."
+              title={`${pair.symbol} market structure`}
+            />
+          ) : (
+            <EmptyState
+              description="No signal has been generated for this pair yet, so there is no execution map to render."
+              title="Awaiting first signal"
+            />
+          )}
 
           <div className="space-y-6">
             <Card>

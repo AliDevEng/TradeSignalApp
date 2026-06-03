@@ -1,11 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
-  Bell,
   Bot,
   ChevronRight,
   Command,
@@ -14,7 +14,12 @@ import {
   ShieldCheck
 } from "lucide-react";
 
+import { CommandPalette } from "@/components/layout/CommandPalette";
+import { NotificationBell } from "@/components/layout/NotificationBell";
+import { StoreHydration } from "@/components/layout/StoreHydration";
+import { Toaster } from "@/components/feedback/Toaster";
 import { Button } from "@/components/ui/Button";
+import { track } from "@/lib/analytics";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/uiStore";
@@ -89,10 +94,23 @@ function Breadcrumbs({ pathname }: { pathname: string }) {
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
-  const toggleCommandPanel = useUIStore((state) => state.toggleCommandPanel);
+  const toggleCommandPalette = useUIStore((state) => state.toggleCommandPalette);
+  const setLastPath = useUIStore((state) => state.setLastPath);
+
+  // Remember the last visited route and record a pageview on each navigation.
+  useEffect(() => {
+    setLastPath(pathname);
+    track({ name: "pageview", path: pathname });
+  }, [pathname, setLastPath]);
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
+      <a
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:border focus:border-[var(--gold)] focus:bg-[#0d131c] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[#fff8df]"
+        href="#main-content"
+      >
+        Skip to content
+      </a>
       <header className="sticky top-0 z-30 border-b border-[#2b2415] bg-[rgba(9,11,16,0.94)] backdrop-blur-xl">
         <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <Link className="flex items-center gap-3" href="/dashboard">
@@ -118,10 +136,11 @@ export function AppShell({ children }: AppShellProps) {
                       ? "bg-[var(--gold)] text-[#080a0f]"
                       : "text-[#9aa4b2] hover:bg-[#182132] hover:text-[#fff8df]"
                   )}
+                  aria-current={isActive ? "page" : undefined}
                   href={item.href}
                   key={item.href}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon aria-hidden className="h-4 w-4" />
                   {item.label}
                 </Link>
               );
@@ -129,12 +148,16 @@ export function AppShell({ children }: AppShellProps) {
           </nav>
 
           <div className="flex items-center gap-2">
-            <Button aria-label="Open command panel" onClick={toggleCommandPanel} size="icon">
+            <Button
+              aria-label="Open command palette"
+              className="gap-2"
+              onClick={toggleCommandPalette}
+              variant="secondary"
+            >
               <Command className="h-4 w-4" />
+              <span className="hidden text-xs text-[var(--muted)] sm:inline">⌘K</span>
             </Button>
-            <Button aria-label="Notifications" size="icon" variant="secondary">
-              <Bell className="h-4 w-4" />
-            </Button>
+            <NotificationBell />
           </div>
         </div>
       </header>
@@ -160,10 +183,11 @@ export function AppShell({ children }: AppShellProps) {
                           ? "bg-[#201a0d] text-[var(--gold-strong)]"
                           : "text-[#a5afbf] hover:bg-[#182132] hover:text-[#fff8df]"
                       )}
+                      aria-current={isActive ? "page" : undefined}
                       href={item.href}
                       key={item.href}
                     >
-                      <Icon className="h-4 w-4" />
+                      <Icon aria-hidden className="h-4 w-4" />
                       {item.label}
                     </Link>
                   );
@@ -173,11 +197,15 @@ export function AppShell({ children }: AppShellProps) {
           </div>
         </aside>
 
-        <main className="min-w-0 space-y-5">
+        <main className="min-w-0 space-y-5" id="main-content" tabIndex={-1}>
           <Breadcrumbs pathname={pathname} />
           {children}
         </main>
       </div>
+
+      <StoreHydration />
+      <CommandPalette />
+      <Toaster />
     </div>
   );
 }

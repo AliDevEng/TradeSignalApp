@@ -2,6 +2,7 @@
 
 import { BarChart3, Bot, Layers3, LineChart, RefreshCw, Sparkles } from "lucide-react";
 
+import { RelativeTime } from "@/components/common/RelativeTime";
 import { HealthPanel } from "@/components/health/HealthPanel";
 import { SignalList } from "@/components/signals/SignalList";
 import { SignalListSkeleton } from "@/components/signals/SignalListSkeleton";
@@ -187,6 +188,14 @@ export function DashboardShell() {
                 <p className="mt-1 text-sm text-[var(--muted)]">
                   Prioritized signals, risk levels, and model confidence.
                 </p>
+                {signalsQuery.isSuccess ? (
+                  <RelativeTime
+                    className="mt-1 block text-xs font-medium text-[var(--muted)]"
+                    intervalMs={5_000}
+                    prefix="Auto-refreshing · updated"
+                    value={signalsQuery.dataUpdatedAt}
+                  />
+                ) : null}
               </div>
               <DensitySwitch density={density} setDensity={setDensity} />
             </div>
@@ -240,8 +249,13 @@ function DensitySwitch({
   setDensity: (density: "comfortable" | "compact") => void;
 }) {
   return (
-    <div className="flex rounded-lg border border-[var(--panel-border)] bg-[#111722] p-1">
+    <div
+      aria-label="Feed density"
+      className="flex rounded-lg border border-[var(--panel-border)] bg-[#111722] p-1"
+      role="group"
+    >
       <button
+        aria-pressed={density === "comfortable"}
         className={`h-9 rounded-md px-3 text-sm font-semibold ${
           density === "comfortable" ? "bg-[var(--gold)] text-[#080a0f]" : "text-[var(--muted)]"
         }`}
@@ -251,6 +265,7 @@ function DensitySwitch({
         Comfortable
       </button>
       <button
+        aria-pressed={density === "compact"}
         className={`h-9 rounded-md px-3 text-sm font-semibold ${
           density === "compact" ? "bg-[var(--gold)] text-[#080a0f]" : "text-[var(--muted)]"
         }`}

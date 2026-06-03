@@ -1,5 +1,14 @@
-import type { ApiPair, ApiSignal } from "@/types/tradeApi";
-import type { Signal, SignalReasoning, SignalStatus, Timeframe, TradingPair } from "@/types/signal";
+import type { ApiIndicatorSnapshot, ApiPair, ApiSignal } from "@/types/tradeApi";
+import type {
+  IndicatorSnapshot,
+  Signal,
+  SignalReasoning,
+  SignalStatus,
+  SignalTarget,
+  SignalTargetLabel,
+  Timeframe,
+  TradingPair
+} from "@/types/signal";
 
 const timeframeFallback: Timeframe = "1h";
 const supportedTimeframes = new Set<Timeframe>(["1m", "5m", "15m", "30m", "1h", "4h", "1d"]);
@@ -11,6 +20,18 @@ function parsePrice(value: string | null): number | null {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value;
+}
+
+function parseString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function normalizeTimeframe(value: string): Timeframe {
@@ -25,23 +46,73 @@ function deriveStatus(signal: ApiSignal): SignalStatus {
   return signal.direction === "neutral" ? "watchlist" : "active";
 }
 
-function computeRiskReward(signal: ApiSignal): number | null {
-  const entry = parsePrice(signal.entry_price);
-  const stopLoss = parsePrice(signal.stop_loss);
-  const takeProfit = parsePrice(signal.take_profit);
+/** Signed distance from `entry` to `level`, as a fraction (0.012 = +1.2%). */
+function distanceFromEntry(entry: number, level: number | null): number | null {
+  if (level === null || entry === 0) {
+    return null;
+  }
 
-  if (entry === null || stopLoss === null || takeProfit === null || entry === stopLoss) {
+  return (level - entry) / entry;
+}
+
+function buildTargets(signal: ApiSignal, entry: number): SignalTarget[] {
+  const ladder: Array<{ label: SignalTargetLabel; value: string | null }> = [
+    { label: "TP1", value: signal.take_profit },
+    { label: "TP2", value: signal.take_profit_2 },
+    { label: "TP3", value: signal.take_profit_3 }
+  ];
+
+  return ladder.flatMap(({ label, value }) => {
+    const price = parsePrice(value);
+    if (price === null) {
+      return [];
+    }
+
+    return [{ label, price, distancePercent: distanceFromEntry(entry, price) }];
+  });
+}
+
+function computeRiskReward(entry: number, stopLoss: number | null, firstTarget: number | null): number | null {
+  if (stopLoss === null || firstTarget === null || entry === stopLoss) {
     return null;
   }
 
   const risk = Math.abs(entry - stopLoss);
-  const reward = Math.abs(takeProfit - entry);
+  const reward = Math.abs(firstTarget - entry);
 
   if (risk === 0) {
     return null;
   }
 
   return reward / risk;
+}
+
+function mapIndicators(raw: Record<string, unknown> | null): IndicatorSnapshot | null {
+  if (raw === null) {
+    return null;
+  }
+
+  const snapshot = raw as Partial<ApiIndicatorSnapshot>;
+
+  return {
+    asOf: parseString(snapshot.as_of),
+    candlesAnalyzed: parseNumber(snapshot.candles_analyzed) ?? 0,
+    lastClose: parseNumber(snapshot.last_close),
+    sma20: parseNumber(snapshot.sma_20),
+    sma50: parseNumber(snapshot.sma_50),
+    ema20: parseNumber(snapshot.ema_20),
+    ema50: parseNumber(snapshot.ema_50),
+    ema200: parseNumber(snapshot.ema_200),
+    rsi14: parseNumber(snapshot.rsi_14),
+    macd: parseNumber(snapshot.macd),
+    macdSignal: parseNumber(snapshot.macd_signal),
+    macdHistogram: parseNumber(snapshot.macd_histogram),
+    atr14: parseNumber(snapshot.atr_14),
+    bbUpper: parseNumber(snapshot.bb_upper),
+    bbMiddle: parseNumber(snapshot.bb_middle),
+    bbLower: parseNumber(snapshot.bb_lower),
+    bbPercent: parseNumber(snapshot.bb_percent)
+  };
 }
 
 function buildReasoning(signal: ApiSignal): SignalReasoning {
@@ -86,24 +157,31 @@ export function mapApiPair(pair: ApiPair): TradingPair {
 export function mapApiSignal(signal: ApiSignal, pairs: TradingPair[]): Signal {
   const symbol = signal.pair_symbol ?? pairs.find((pair) => pair.id === signal.pair_id)?.symbol ?? "UNKNOWN";
   const pair = pairs.find((item) => item.symbol === symbol);
-  const takeProfit = parsePrice(signal.take_profit);
+  const entryPrice = parsePrice(signal.entry_price) ?? 0;
+  const stopLoss = parsePrice(signal.stop_loss);
+  const targets = buildTargets(signal, entryPrice);
 
   return {
     id: signal.id,
     pairId: signal.pair_id,
+    analysisRunId: signal.analysis_run_id,
     symbol,
     displayName: pair?.displayName ?? symbol,
     direction: signal.direction,
     status: deriveStatus(signal),
     confidence: signal.confidence,
-    entryPrice: parsePrice(signal.entry_price) ?? 0,
-    stopLoss: parsePrice(signal.stop_loss),
-    targets: takeProfit === null ? [] : [{ label: "TP1", price: takeProfit }],
+    entryPrice,
+    stopLoss,
+    stopDistancePercent: distanceFromEntry(entryPrice, stopLoss),
+    targets,
     timeframe: normalizeTimeframe(signal.timeframe),
     generatedAt: signal.generated_at,
     expiresAt: signal.expires_at,
-    riskReward: computeRiskReward(signal),
+    riskReward: computeRiskReward(entryPrice, stopLoss, targets[0]?.price ?? null),
     rationale: signal.rationale ?? "No rationale was supplied for this signal.",
-    reasoning: buildReasoning(signal)
+    reasoning: buildReasoning(signal),
+    indicators: mapIndicators(signal.indicators_snapshot),
+    aiProvider: signal.ai_provider,
+    aiModel: signal.ai_model
   };
 }

@@ -1,9 +1,12 @@
 "use client";
 
+import { useMemo } from "react";
+
 import { SignalCard } from "@/components/signals/SignalCard";
 import { SignalFilters } from "@/components/signals/SignalFilters";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { refineSignals } from "@/lib/signalFilters";
 import { useSignalStore } from "@/store/signalStore";
 import { useUIStore } from "@/store/uiStore";
 import type { Signal, TradingPair } from "@/types/signal";
@@ -13,20 +16,6 @@ type SignalListProps = {
   pairs: TradingPair[];
 };
 
-function sortSignals(signals: Signal[], sort: ReturnType<typeof useSignalStore.getState>["sort"]) {
-  return [...signals].sort((first, second) => {
-    if (sort === "newest") {
-      return new Date(second.generatedAt).getTime() - new Date(first.generatedAt).getTime();
-    }
-
-    if (sort === "symbol") {
-      return first.symbol.localeCompare(second.symbol);
-    }
-
-    return second.confidence - first.confidence;
-  });
-}
-
 export function SignalList({ signals, pairs }: SignalListProps) {
   const direction = useSignalStore((state) => state.direction);
   const status = useSignalStore((state) => state.status);
@@ -35,15 +24,9 @@ export function SignalList({ signals, pairs }: SignalListProps) {
   const reset = useSignalStore((state) => state.reset);
   const density = useUIStore((state) => state.density);
 
-  const filteredSignals = sortSignals(
-    signals.filter((signal) => {
-      const matchesDirection = direction === "all" || signal.direction === direction;
-      const matchesStatus = status === "all" || signal.status === status;
-      const matchesPair = pair === "all" || signal.symbol === pair;
-
-      return matchesDirection && matchesStatus && matchesPair;
-    }),
-    sort
+  const filteredSignals = useMemo(
+    () => refineSignals(signals, { direction, status, pair, sort }),
+    [signals, direction, status, pair, sort]
   );
 
   return (

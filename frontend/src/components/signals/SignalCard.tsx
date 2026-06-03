@@ -1,3 +1,4 @@
+import { memo } from "react";
 import Link from "next/link";
 import { Brain, Clock3, ShieldCheck, Target } from "lucide-react";
 
@@ -13,7 +14,9 @@ type SignalCardProps = {
   density: "comfortable" | "compact";
 };
 
-export function SignalCard({ signal, density }: SignalCardProps) {
+// Memoised: cards render in long lists and their props (signal + density) are
+// referentially stable across parent re-renders driven by polling/filters.
+export const SignalCard = memo(function SignalCard({ signal, density }: SignalCardProps) {
   const precision = getPricePrecision(signal.symbol);
   const isCompact = density === "compact";
   const primaryTarget = getPrimaryTarget(signal);
@@ -119,4 +122,4 @@ export function SignalCard({ signal, density }: SignalCardProps) {
       </div>
     </Card>
   );
-}
+});

@@ -1,12 +1,18 @@
 import { apiClient } from "@/services/api";
 import type { ApiSuccessResponse, PaginatedResponse } from "@/types/api";
-import type { ApiAnalysisRun, ApiPair, ApiSignal } from "@/types/tradeApi";
+import type { ApiAnalysisRun, ApiAnalysisRunStatus, ApiPair, ApiSignal } from "@/types/tradeApi";
 
-type SignalListParams = {
+export type SignalListParams = {
   page?: number;
   perPage?: number;
   pair?: string;
   runId?: string;
+};
+
+export type AnalysisRunListParams = {
+  page?: number;
+  perPage?: number;
+  status?: ApiAnalysisRunStatus;
 };
 
 export async function getPairs(): Promise<ApiPair[]> {
@@ -37,25 +43,36 @@ export async function getSignal(signalId: string): Promise<ApiSignal> {
   return response.data.data;
 }
 
-export async function getPairSignals(symbol: string): Promise<ApiSignal[]> {
+export async function getPairSignals(symbol: string, limit = 20): Promise<ApiSignal[]> {
   const response = await apiClient.get<ApiSuccessResponse<ApiSignal[]>>(`/pairs/${symbol}/signals`, {
-    params: {
-      limit: 20
-    }
+    params: { limit }
   });
 
   return response.data.data;
 }
 
-export async function getAnalysisRuns(): Promise<PaginatedResponse<ApiAnalysisRun>> {
+export async function getAnalysisRuns(
+  params: AnalysisRunListParams = {}
+): Promise<PaginatedResponse<ApiAnalysisRun>> {
   const response = await apiClient.get<PaginatedResponse<ApiAnalysisRun>>("/analysis/runs", {
     params: {
-      page: 1,
-      per_page: 10
+      page: params.page ?? 1,
+      per_page: params.perPage ?? 10,
+      status: params.status
     }
   });
 
   return response.data;
+}
+
+export async function getAnalysisRun(runId: string): Promise<ApiAnalysisRun> {
+  const response = await apiClient.get<ApiSuccessResponse<ApiAnalysisRun>>(`/analysis/runs/${runId}`);
+  return response.data.data;
+}
+
+export async function getRunSignals(runId: string): Promise<ApiSignal[]> {
+  const response = await apiClient.get<ApiSuccessResponse<ApiSignal[]>>(`/analysis/runs/${runId}/signals`);
+  return response.data.data;
 }
 
 export async function triggerAnalysisRun(): Promise<void> {
