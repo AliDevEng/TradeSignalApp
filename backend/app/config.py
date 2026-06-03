@@ -103,6 +103,15 @@ class Settings(BaseSettings):
     )
     swing_timeframes: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["4h", "1d"])
 
+    # ── Outcome tracking ─────────────────────────────────────────────────────
+    # Cadence of the outcome job, which re-checks open signals against fresh
+    # candles to see whether price hit a target/stop. Independent of the
+    # analysis cadence: outcomes want timely detection (a tighter loop), while
+    # analysis is heavier. One market-data fetch per active pair per outcome
+    # cycle (the lowest configured timeframe, for the finest fills), so keep this
+    # in line with the data plan's per-minute budget.
+    outcome_interval_minutes: int = Field(default=5, ge=1, le=1440)
+
     # ── Signal lifetime ────────────────────────────────────────────────────
     # How long each style's signal stays "fresh" before ``expires_at`` lapses.
     # A scalp ages out in hours; a swing lives for days. These drive the

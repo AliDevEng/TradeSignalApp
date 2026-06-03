@@ -27,6 +27,15 @@ from pydantic import BaseModel, Field
 
 SignalDirection = Literal["buy", "sell", "neutral"]
 SignalType = Literal["scalp", "swing"]
+SignalOutcome = Literal[
+    "open",
+    "hit_tp1",
+    "hit_tp2",
+    "hit_tp3",
+    "hit_sl",
+    "expired",
+    "cancelled",
+]
 
 
 class SignalResponse(BaseModel):
@@ -68,3 +77,11 @@ class SignalResponse(BaseModel):
 
     ai_provider: str | None = None
     ai_model: str | None = None
+
+    # ── Outcome tracking (Iteration 7) ────────────────────────────────────
+    # What price did after the signal was generated. ``outcome`` is ``open``
+    # until the evaluator finds a terminal result; ``realized_r`` (in R
+    # multiples) and ``closed_at`` are populated only once it closes.
+    outcome: SignalOutcome = "open"
+    realized_r: Decimal | None = None
+    closed_at: datetime | None = None

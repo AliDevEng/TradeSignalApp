@@ -6,11 +6,14 @@ job, starting/stopping with the app) lives in ``app.main``.
 """
 
 from app.tasks.analysis_job import AnalysisJob, AnalysisPipeline, pipeline_not_configured
+from app.tasks.outcome_job import OutcomeJob, OutcomePipeline
 from app.tasks.scheduler import Scheduler
 
 __all__ = [
     "AnalysisJob",
     "AnalysisPipeline",
+    "OutcomeJob",
+    "OutcomePipeline",
     "Scheduler",
     "pipeline_not_configured",
 ]

@@ -95,11 +95,25 @@ async def test_list_signals_forwards_pagination_and_filters(client, signals_ctrl
         "pair_symbol": "EURUSD",
         "analysis_run_id": run_id,
         "signal_type": "scalp",
+        "outcome": None,
     }
 
 
 async def test_list_signals_rejects_unknown_style(client, signals_ctrl):
     resp = await client.get("/api/v1/signals?signal_type=daytrade")
+    assert resp.status_code == 422
+
+
+async def test_list_signals_forwards_outcome_filter(client, signals_ctrl):
+    signals_ctrl.list_signals.return_value = Page(items=[], total=0)
+
+    await client.get("/api/v1/signals?outcome=hit_sl")
+
+    assert signals_ctrl.list_signals.await_args.kwargs["outcome"] == "hit_sl"
+
+
+async def test_list_signals_rejects_unknown_outcome(client, signals_ctrl):
+    resp = await client.get("/api/v1/signals?outcome=moon")
     assert resp.status_code == 422
 
 

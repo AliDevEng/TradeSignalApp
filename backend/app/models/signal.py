@@ -72,6 +72,32 @@ class SignalType(enum.StrEnum):
     SWING = "swing"
 
 
+class SignalOutcome(enum.StrEnum):
+    """What actually happened to a signal once price had its say.
+
+    A signal is born ``OPEN`` and stays there until the outcome evaluator finds
+    that price touched a level or the signal aged out:
+
+    * ``HIT_TP1``/``HIT_TP2``/``HIT_TP3`` — price reached that take-profit rung.
+    * ``HIT_SL`` — price hit the stop-loss (a -1R loss).
+    * ``EXPIRED`` — ``expires_at`` lapsed before any level was touched; the
+      result is marked-to-market at the last candle.
+    * ``CANCELLED`` — invalidated administratively (kept for completeness; the
+      evaluator never assigns it).
+
+    The terminal states are what the performance/calibration API (Iteration 8)
+    aggregates into a track record, so the vocabulary is fixed at the DB layer.
+    """
+
+    OPEN = "open"
+    HIT_TP1 = "hit_tp1"
+    HIT_TP2 = "hit_tp2"
+    HIT_TP3 = "hit_tp3"
+    HIT_SL = "hit_sl"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
 class Signal(Base, TimestampMixin):
     __tablename__ = "signals"
     __table_args__ = (
@@ -205,6 +231,39 @@ class Signal(Base, TimestampMixin):
     # value of `confidence` stays interpretable across model upgrades.
     ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     ai_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # ── Outcome tracking (Iteration 7) ────────────────────────────────────
+    # Filled by the outcome evaluator/job: what price did after the signal was
+    # generated. `outcome` starts OPEN and transitions once (terminal); the
+    # excursion/R fields let the performance API build a track record without
+    # re-deriving anything from candles.
+    outcome: Mapped[SignalOutcome] = mapped_column(
+        SAEnum(
+            SignalOutcome,
+            name="signal_outcome",
+            native_enum=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=SignalOutcome.OPEN,
+        server_default=SignalOutcome.OPEN.value,
+        index=True,
+    )
+    # When the signal reached a terminal outcome (NULL while OPEN).
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Realised result in R multiples (profit/loss ÷ initial risk). NULL while
+    # OPEN, or when the signal carried no stop (risk undefined). Signed: a stop
+    # hit is -1, a winning TP is positive.
+    realized_r: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    # Max favourable / adverse excursion in R over the signal's life so far —
+    # updated every evaluation, even while OPEN. NULL when risk is undefined.
+    mfe: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    mae: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    # Last time the evaluator looked at this signal — lets the job skip nothing
+    # and makes "is tracking alive?" observable.
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     pair: Mapped[Pair] = relationship(back_populates="signals", lazy="joined")
     analysis_run: Mapped[AnalysisRun | None] = relationship(back_populates="signals")

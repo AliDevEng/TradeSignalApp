@@ -16,7 +16,7 @@ from fastapi import APIRouter, Query
 
 from app.dependencies import PaginationDep, SignalControllerDep
 from app.schemas.common import APIResponse, PaginatedResponse, PaginationMeta
-from app.schemas.signal import SignalResponse, SignalType
+from app.schemas.signal import SignalOutcome, SignalResponse, SignalType
 
 router = APIRouter(prefix="/signals", tags=["Signals"])
 
@@ -41,6 +41,10 @@ async def list_signals(
         default=None,
         description="Filter by trade style (scalp/swing).",
     ),
+    outcome: SignalOutcome | None = Query(
+        default=None,
+        description="Filter by outcome (open/hit_tp1/hit_tp2/hit_tp3/hit_sl/expired/cancelled).",
+    ),
 ) -> PaginatedResponse[SignalResponse]:
     page = await controller.list_signals(
         offset=pagination.offset,
@@ -48,6 +52,7 @@ async def list_signals(
         pair_symbol=pair,
         analysis_run_id=run_id,
         signal_type=signal_type,
+        outcome=outcome,
     )
     return PaginatedResponse(
         data=page.items,

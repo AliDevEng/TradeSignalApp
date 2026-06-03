@@ -215,6 +215,45 @@ def test_offline_upgrade_adds_signal_type_index(initial_migration_sql: str):
     assert "ix_signals_pair_id_signal_type_generated_at" in initial_migration_sql
 
 
+# ── 0004: signal_outcome tracking ──────────────────────────────────────────
+
+
+def test_offline_upgrade_creates_signal_outcome_enum_before_use(initial_migration_sql: str):
+    sql = initial_migration_sql
+    enum_pos = sql.find("CREATE TYPE signal_outcome")
+    column_pos = sql.find("ADD COLUMN outcome")
+    assert enum_pos != -1, "signal_outcome enum must be created"
+    assert column_pos != -1, "outcome column must be added"
+    assert enum_pos < column_pos
+
+
+def test_offline_upgrade_adds_outcome_columns(initial_migration_sql: str):
+    sql = initial_migration_sql
+    for column in ("outcome", "closed_at", "realized_r", "mfe", "mae", "last_evaluated_at"):
+        assert re.search(rf"ADD COLUMN {column}\b", sql, re.IGNORECASE), (
+            f"migration must add the {column!r} column"
+        )
+
+
+def test_offline_upgrade_outcome_defaults_to_open(initial_migration_sql: str):
+    """The outcome column is NOT NULL with a server default so existing rows
+    backfill to 'open' atomically."""
+    sql = initial_migration_sql
+    assert re.search(
+        r"ADD COLUMN outcome[\s\S]*?DEFAULT\s+'open'",
+        sql,
+        re.IGNORECASE,
+    )
+
+
+def test_offline_upgrade_uses_numeric_for_realized_r(initial_migration_sql: str):
+    assert re.search(r"realized_r\s+NUMERIC\(12,\s*4\)", initial_migration_sql, re.IGNORECASE)
+
+
+def test_offline_upgrade_adds_outcome_index(initial_migration_sql: str):
+    assert "ix_signals_outcome" in initial_migration_sql
+
+
 # ── env.py wiring ──────────────────────────────────────────────────────────
 
 

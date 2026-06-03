@@ -96,17 +96,17 @@ the slow ones so a full multi-timeframe cycle fits the data-provider budget.
   back-testable without network or AI.
 - **Docker is still deferred** (Iteration 5) until the deployment target is settled.
 
-### Iteration 6 - Per-Style Timeframes + Candle Caching (efficiency) (18 points)
+### Iteration 6 - Per-Style Timeframes + Candle Caching (efficiency) (18 points) ✅ DONE
 Goal: frame each signal style on the timeframes that actually drive it, and stop
 re-fetching slow candles that cannot have changed since the last run — so a full
 multi-timeframe cycle fits inside the Twelve Data free-tier budget.
-- [ ] (4) Config: replace the single `analysis_timeframes` with per-style
+- [x] (4) Config: replace the single `analysis_timeframes` with per-style
   `scalp_timeframes` (default `5m,15m,1h,4h`) and `swing_timeframes`
   (default `4h,1d`); expose an ordered-unique `analysis_timeframes` *property*
   (their union) so the fetch loop and run ledger stay unchanged. Validate each set
   (known timeframes, deduped, non-empty) and keep `analysis_timeframe` (the
   primary/decision frame) inside the union.
-- [ ] (5) `services/market_data/cache.py` — a `CachingMarketDataProvider` that
+- [x] (5) `services/market_data/cache.py` — a `CachingMarketDataProvider` that
   *wraps* the concrete provider and implements the same `MarketDataProvider` ABC,
   so the controller's `fetch_candles` call is unchanged. Cache keyed by
   `(symbol, timeframe)`, freshness aligned to **bar-close boundaries** (a series
@@ -116,35 +116,41 @@ multi-timeframe cycle fits inside the Twelve Data free-tier budget.
   cache while fresh *and* the cached count is sufficient, else fetch. A per-key
   `asyncio.Lock` prevents a fetch stampede when a manual run overlaps the
   scheduled one. `aclose()` delegates to the wrapped provider. Wired in the lifespan.
-- [ ] (4) Prompt: carry `scalp_timeframes`/`swing_timeframes` on `AnalysisContext`
+- [x] (4) Prompt: carry `scalp_timeframes`/`swing_timeframes` on `AnalysisContext`
   and label each timeframe block in `_build_user_prompt` with its role
-  (`[SCALP frame]`/`[SWING frame]`/`[shared]`); extend the output contract so the
-  model frames the scalp's levels on the scalp timeframes and the swing's on the
-  swing timeframes, while still reading all of them for bias.
-- [ ] (3) Controller: drive the fetch loop from the union, record the scalp's
+  (`[SCALP frame]`/`[SWING frame]`/`[SCALP+SWING frame]`); extend the output
+  contract so the model frames the scalp's levels on the scalp timeframes and the
+  swing's on the swing timeframes, while still reading all of them for bias.
+- [x] (3) Controller: drive the fetch loop from the union, record the scalp's
   timeframe as the lowest scalp frame and the swing's as the highest swing frame,
   and pass the two frame-sets into `AnalysisContext`.
-- [ ] (2) Tests + docs: `CachingMarketDataProvider` tests (fresh-hit,
-  TTL-expiry-miss, insufficient-count-miss, lock), updated config/prompt/controller
-  tests, and refreshed `.env.example` + this README.
+- [x] (2) Tests + docs: `CachingMarketDataProvider` tests (same-bar hit, bar-close
+  refetch, boundary-crossing refetch, insufficient-count-miss, lock), updated
+  config/prompt/controller tests, and refreshed `.env.example` + this README.
 
-### Iteration 7 - Signal Outcome Tracking (foundation) (20 points)
+### Iteration 7 - Signal Outcome Tracking (foundation) (20 points) ✅ DONE
 Goal: record what actually happened to every signal, so the platform has a track record.
-- [ ] (5) Migration: add to `signals` an `outcome` native enum
-  (`open|hit_tp1|hit_tp2|hit_tp3|hit_sl|expired|cancelled`), plus `closed_at`,
-  `realized_r` (`Numeric`), `mfe`/`mae` (max favourable/adverse excursion), and
-  `last_evaluated_at`. Backfill existing rows to `open`.
-- [ ] (5) `services/outcome/evaluator.py` — a **pure** `OutcomeEvaluator`: given an
-  open signal + the candles since `generated_at`, return the new outcome and the
-  realized R. Deterministic, no IO, unit-tested. Encodes the order-of-touch rule
-  (if one candle's range spans both SL and a TP, resolve conservatively to SL).
-- [ ] (4) `tasks/outcome_job.py` — a scheduled job (own cadence,
-  `OUTCOME_INTERVAL_MINUTES`) that fetches the active pair's latest candles once,
-  loads open signals, runs the evaluator, and persists outcomes in one transaction.
-  Error-isolated exactly like `AnalysisJob`. Wired into the scheduler at lifespan.
-- [ ] (3) `SignalRepository`: add `list_open`, `mark_outcome`, and an `outcome`
+- [x] (5) Migration (`0004_signal_outcome`): add to `signals` an `outcome` native
+  enum (`open|hit_tp1|hit_tp2|hit_tp3|hit_sl|expired|cancelled`), plus `closed_at`,
+  `realized_r` (`Numeric(12,4)`), `mfe`/`mae` (max favourable/adverse excursion in
+  R), and `last_evaluated_at`. `outcome` is `NOT NULL DEFAULT 'open'` so existing
+  rows backfill atomically; indexed via `ix_signals_outcome`.
+- [x] (5) `services/outcome/evaluator.py` — a **pure** `OutcomeEvaluator`: given an
+  open position + the candles since `generated_at`, return the new outcome, the
+  realized R, and MFE/MAE. Deterministic, no IO, unit-tested. Encodes the
+  order-of-touch rule (a candle whose range spans both SL and a TP resolves
+  conservatively to SL), furthest-TP-wins within a candle, and expiry
+  mark-to-market. Speaks plain `Literal`s/value objects so it stays ORM-free.
+- [x] (4) `tasks/outcome_job.py` + `controllers/outcome_controller.py` — the job is
+  the thin error-isolating wrapper (exactly like `AnalysisJob`); the controller
+  owns the work: snapshot active pairs → fetch the lowest-timeframe candles once
+  per pair (no session across IO) → load open signals → evaluate → persist
+  outcomes in one transaction. Per-pair fetch failures are isolated. Runs on its
+  own cadence (`OUTCOME_INTERVAL_MINUTES`, default 5) wired into the scheduler at
+  lifespan.
+- [x] (3) `SignalRepository`: add `list_open`, `mark_outcome`, and an `outcome`
   filter on `list_paginated`/`count_filtered`.
-- [ ] (3) Surface `outcome`, `realized_r`, `closed_at` on `SignalResponse`; add an
+- [x] (3) Surface `outcome`, `realized_r`, `closed_at` on `SignalResponse`; add an
   `?outcome=` filter to `GET /api/v1/signals`.
 
 ### Iteration 8 - Performance & Calibration API (16 points)
@@ -719,6 +725,59 @@ does not collect them. **Live-Postgres round-trips and real provider network
 calls remain deliberately deferred** (see the note under the verification
 status) — these tests deepen confidence in the logic and the wire contract, not
 the infrastructure bindings.
+
+### Per-style timeframes + candle cache (Iteration 6 deliverable)
+
+Two changes sharpen the signal engine without touching its shape. First, each
+style is framed on its own timeframe set: `scalp_timeframes` (default
+`5m,15m,1h,4h`) and `swing_timeframes` (default `4h,1d`). `Settings` exposes an
+ordered-unique `analysis_timeframes` *property* — the union of the two — so the
+controller's fetch loop and the run ledger are unchanged, and overlapping a frame
+across styles (the shared `4h`) costs nothing. The AI prompt now labels each
+timeframe block with its role (`[SCALP frame]`/`[SWING frame]`/`[SCALP+SWING
+frame]`) and instructs the model to anchor each style's levels to its own frame
+while still reading every timeframe for bias.
+
+Second, `CachingMarketDataProvider` (`services/market_data/cache.py`) wraps the
+concrete provider behind the same `MarketDataProvider` ABC — so the controller is
+oblivious — and serves candles from memory until a new bar closes. Freshness is
+**bar-boundary aligned**, not a wall-clock TTL: a series is reused only while
+`now` is in the same bar window as the fetch (windows are epoch-aligned, which —
+since every timeframe divides a day — coincides with the UTC-midnight boundaries
+the provider closes on). A per-`(symbol, timeframe)` `asyncio.Lock` collapses
+fetch stampedes when a manual run overlaps the scheduled one. Net effect: a
+typical cycle re-fetches only the fast frames (`5m`, `15m`) and reuses `1h`/`4h`/
+`1d` between bars — well inside the free-tier ceiling.
+
+### Signal outcome tracking (Iteration 7 deliverable)
+
+This is the keystone of the measurement work: every signal now records what price
+*did*, not just what the AI *said*. The model gains an `outcome` native enum
+(`open` → one of `hit_tp1`/`hit_tp2`/`hit_tp3`/`hit_sl`/`expired`/`cancelled`),
+plus `closed_at`, `realized_r`, `mfe`/`mae` (in R), and `last_evaluated_at`
+(migration `0004`).
+
+The verdict comes from a **pure** `OutcomeEvaluator` (`services/outcome/`): feed
+it an open position (plain values, not an ORM row) and the candles since
+generation, and it returns the outcome plus R figures, deterministically and
+without IO — so it is fully back-testable. It models a bracket held to its ladder,
+scanned oldest→newest: the position closes on the first candle to reach the stop
+or a take-profit; a candle that spans **both** resolves conservatively to the stop
+(the track record never claims an unprovable win); a candle reaching several TPs
+at once records the furthest; an untouched-but-expired signal is marked to market.
+R requires a stop (to define risk) — a stop-less signal is still classified but
+its R fields stay `None`. `mfe`/`mae` update every cycle, even while open.
+
+Persistence mirrors the analysis side exactly. `OutcomeController` owns the
+sessions and transaction boundaries — snapshot the active pairs, fetch the lowest
+configured timeframe once per pair (finest fills, one call) **owning no session**,
+then load open signals, evaluate, and `mark_outcome` in a single committed
+transaction — with per-pair fetch failures isolated. The thin `OutcomeJob`
+(`tasks/outcome_job.py`) wraps `run_scheduled` with error containment just like
+`AnalysisJob`, and runs on its own `OUTCOME_INTERVAL_MINUTES` cadence (default 5,
+tighter than analysis so closes are detected promptly). `SignalRepository` gains
+`list_open`, `mark_outcome`, and an `outcome` filter; `SignalResponse` surfaces
+`outcome`/`realized_r`/`closed_at`, and `GET /api/v1/signals` accepts `?outcome=`.
 
 ## 🧪 Run
 ```bash

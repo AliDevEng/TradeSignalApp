@@ -10,11 +10,13 @@ belongs to the repository SQL tests and the integration suite.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
 from app.controllers.exceptions import ResourceNotFoundError
 from app.controllers.signal_controller import SignalController
+from app.models import SignalOutcome
 from app.schemas.signal import SignalResponse
 
 from tests._factories import make_pair, make_signal
@@ -51,6 +53,26 @@ async def test_list_signals_short_circuits_when_count_zero():
     assert page.total == 0
     assert page.items == []
     signals.list_paginated.assert_not_awaited()
+
+
+async def test_list_signals_forwards_outcome_filter_as_model_enum():
+    ctrl, signals, _ = _controller()
+    signals.count_filtered.return_value = 0
+
+    await ctrl.list_signals(offset=0, limit=20, outcome="hit_tp1")
+
+    # The wire literal is converted to the ORM enum at the boundary.
+    assert signals.count_filtered.await_args.kwargs["outcome"] is SignalOutcome.HIT_TP1
+
+
+async def test_to_response_surfaces_outcome_fields():
+    signal = make_signal(
+        outcome=SignalOutcome.HIT_TP2,
+        realized_r=Decimal("3.5"),
+    )
+    response = SignalController._to_response(signal)
+    assert response.outcome == "hit_tp2"
+    assert response.realized_r == Decimal("3.5")
 
 
 async def test_list_signals_resolves_pair_symbol_to_id():

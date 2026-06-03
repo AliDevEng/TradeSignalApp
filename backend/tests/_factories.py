@@ -23,6 +23,7 @@ from app.models import (
     Pair,
     Signal,
     SignalDirection,
+    SignalOutcome,
     SignalType,
 )
 
@@ -69,6 +70,9 @@ def make_signal(
     generated_at: datetime = _FIXED_NOW,
     ai_provider: str | None = "groq",
     ai_model: str | None = "llama-3.3-70b-versatile",
+    outcome: SignalOutcome = SignalOutcome.OPEN,
+    realized_r: Decimal | None = None,
+    closed_at: datetime | None = None,
 ) -> Signal:
     pair = pair if pair is not None else make_pair()
     signal = Signal(
@@ -89,6 +93,11 @@ def make_signal(
         expires_at=None,
         ai_provider=ai_provider,
         ai_model=ai_model,
+        # Set explicitly: the column default only applies at flush, but these
+        # builders make transient (never-persisted) rows the mapping reads directly.
+        outcome=outcome,
+        realized_r=realized_r,
+        closed_at=closed_at,
     )
     signal.id = id or uuid.uuid4()
     # Set the relationship directly so the mapping reads it without a lazy load.

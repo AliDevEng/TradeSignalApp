@@ -31,7 +31,7 @@ import uuid
 from app.controllers.exceptions import ResourceNotFoundError
 from app.controllers.results import Page
 from app.database.repository import PairRepository, SignalRepository
-from app.models import Signal, SignalType
+from app.models import Signal, SignalOutcome, SignalType
 from app.schemas.signal import SignalResponse
 
 
@@ -52,25 +52,28 @@ class SignalController:
         pair_symbol: str | None = None,
         analysis_run_id: uuid.UUID | None = None,
         signal_type: str | None = None,
+        outcome: str | None = None,
     ) -> Page[SignalResponse]:
-        """A page of signals, newest first, optionally filtered by pair, run, style.
+        """A page of signals, newest first, filtered by pair, run, style, outcome.
 
         ``offset``/``limit`` are passed through from the view's pagination
         dependency; the view reassembles page/per_page into the response meta.
-        ``signal_type`` arrives as the validated wire literal and is converted to
-        the ORM enum here, at the boundary, so the view never imports the model
-        enum. Filtering by a ``pair_symbol`` that doesn't exist raises
-        :class:`ResourceNotFoundError` rather than silently returning an empty
-        page — a filter that names a concrete resource should fail honestly if
-        that resource is unknown.
+        ``signal_type``/``outcome`` arrive as validated wire literals and are
+        converted to the ORM enums here, at the boundary, so the view never
+        imports a model enum. Filtering by a ``pair_symbol`` that doesn't exist
+        raises :class:`ResourceNotFoundError` rather than silently returning an
+        empty page — a filter that names a concrete resource should fail honestly
+        if that resource is unknown.
         """
         pair_id = await self._resolve_pair_id(pair_symbol)
         style = SignalType(signal_type) if signal_type is not None else None
+        result = SignalOutcome(outcome) if outcome is not None else None
 
         total = await self._signals.count_filtered(
             pair_id=pair_id,
             analysis_run_id=analysis_run_id,
             signal_type=style,
+            outcome=result,
         )
         # Short-circuit the row fetch when the count is zero: nothing to load,
         # and it keeps an empty page from issuing a guaranteed-empty SELECT.
@@ -83,6 +86,7 @@ class SignalController:
             pair_id=pair_id,
             analysis_run_id=analysis_run_id,
             signal_type=style,
+            outcome=result,
             eager_load_pair=True,
         )
         return Page(items=[self._to_response(row) for row in rows], total=total)
@@ -160,6 +164,9 @@ class SignalController:
             expires_at=signal.expires_at,
             ai_provider=signal.ai_provider,
             ai_model=signal.ai_model,
+            outcome=signal.outcome.value,
+            realized_r=signal.realized_r,
+            closed_at=signal.closed_at,
         )
 
 

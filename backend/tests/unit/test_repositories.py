@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,10 +33,19 @@ from app.database.repository import (
     PairRepository,
     SignalRepository,
 )
-from app.models import AnalysisRun, AnalysisRunStatus, Pair, Signal, SignalType
+from app.models import (
+    AnalysisRun,
+    AnalysisRunStatus,
+    Pair,
+    Signal,
+    SignalOutcome,
+    SignalType,
+)
 from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests._factories import make_signal
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -393,6 +403,68 @@ async def test_signal_latest_for_pair_applies_signal_type_filter():
     sql = _compile(session.execute.call_args.args[0]).lower()
     assert "pair_id = 9" in sql
     assert "signal_type = 'swing'" in sql
+
+
+async def test_signal_list_paginated_applies_outcome_filter():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    await repo.list_paginated(offset=0, limit=20, outcome=SignalOutcome.HIT_TP1)
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "outcome = 'hit_tp1'" in sql
+
+
+async def test_signal_count_filtered_applies_outcome_filter():
+    session = _make_session()
+    result = MagicMock()
+    result.scalar_one.return_value = 0
+    session.execute.return_value = result
+    repo = SignalRepository(session)
+
+    await repo.count_filtered(outcome=SignalOutcome.HIT_SL)
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "count(*)" in sql
+    assert "outcome = 'hit_sl'" in sql
+
+
+async def test_signal_list_open_filters_on_open_outcome():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    await repo.list_open(pair_id=5)
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "from signals" in sql
+    assert "outcome = 'open'" in sql
+    assert "pair_id = 5" in sql
+    assert "order by signals.generated_at" in sql
+
+
+def test_signal_mark_outcome_stages_fields_without_commit():
+    session = _make_session()
+    repo = SignalRepository(session)
+    signal = make_signal(generated_at=datetime(2026, 6, 1, tzinfo=UTC))
+    closed = datetime(2026, 6, 2, tzinfo=UTC)
+
+    repo.mark_outcome(
+        signal,
+        outcome=SignalOutcome.HIT_TP2,
+        realized_r=Decimal("3.5"),
+        mfe=Decimal("3.5"),
+        mae=Decimal("-0.4"),
+        closed_at=closed,
+        last_evaluated_at=closed,
+    )
+
+    assert signal.outcome is SignalOutcome.HIT_TP2
+    assert signal.realized_r == Decimal("3.5")
+    assert signal.closed_at == closed
+    # Pure staging — the repo must never commit on its own.
+    session.commit.assert_not_called()
 
 
 async def test_signal_current_for_pair_returns_one_per_style():

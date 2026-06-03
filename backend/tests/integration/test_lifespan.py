@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from app.config import Settings
-from app.main import ANALYSIS_JOB_ID, create_app
+from app.main import ANALYSIS_JOB_ID, OUTCOME_JOB_ID, create_app
 
 
 def _settings(**overrides) -> Settings:
@@ -32,8 +32,11 @@ async def test_lifespan_constructs_and_starts_services():
         assert state.market_data_provider is not None
         assert state.ai_provider is not None
         assert state.scheduler.running is True
-        # The analysis cadence is registered under the shared job id.
+        # Both cadences are registered under their shared job ids.
         assert state.scheduler.get_job(ANALYSIS_JOB_ID) is not None
+        assert state.scheduler.get_job(OUTCOME_JOB_ID) is not None
+        # The outcome controller is constructed for the sweep + any future endpoint.
+        assert state.outcome_controller is not None
 
     # Shutdown must stop the scheduler. AsyncIOScheduler finalises its stop on
     # the next loop tick, so yield once before observing the flag.

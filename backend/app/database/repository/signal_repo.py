@@ -25,11 +25,50 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 
 from app.database.repository.base import BaseRepository
-from app.models import Signal, SignalType
+from app.models import Signal, SignalOutcome, SignalType
 
 
 class SignalRepository(BaseRepository[Signal]):
     model = Signal
+
+    async def list_open(self, *, pair_id: int | None = None) -> Sequence[Signal]:
+        """Every still-``OPEN`` signal, oldest first, optionally scoped to a pair.
+
+        Drives the outcome job: these are the rows the evaluator re-checks each
+        cycle. Oldest-first so a bounded batch (if ever introduced) processes the
+        longest-waiting signals first. Hits ``ix_signals_outcome``.
+        """
+        stmt = select(Signal).where(Signal.outcome == SignalOutcome.OPEN)
+        if pair_id is not None:
+            stmt = stmt.where(Signal.pair_id == pair_id)
+        stmt = stmt.order_by(Signal.generated_at)
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    def mark_outcome(
+        self,
+        signal: Signal,
+        *,
+        outcome: SignalOutcome,
+        realized_r: object | None,
+        mfe: object | None,
+        mae: object | None,
+        closed_at: object | None,
+        last_evaluated_at: object,
+    ) -> None:
+        """Stage an outcome update onto an already-loaded signal.
+
+        Like every write helper here it only *stages* the change on the session
+        (mutating the tracked instance); the controller owns the commit. Kept as
+        a named method so the outcome-field set lives in one place rather than
+        being assigned ad hoc at the call site.
+        """
+        signal.outcome = outcome
+        signal.realized_r = realized_r  # type: ignore[assignment]
+        signal.mfe = mfe  # type: ignore[assignment]
+        signal.mae = mae  # type: ignore[assignment]
+        signal.closed_at = closed_at  # type: ignore[assignment]
+        signal.last_evaluated_at = last_evaluated_at  # type: ignore[assignment]
 
     async def latest_for_pair(
         self,
@@ -75,6 +114,7 @@ class SignalRepository(BaseRepository[Signal]):
         pair_id: int | None = None,
         analysis_run_id: uuid.UUID | None = None,
         signal_type: SignalType | None = None,
+        outcome: SignalOutcome | None = None,
         eager_load_pair: bool = False,
     ) -> Sequence[Signal]:
         """Generic signal list with optional filters and IN-loaded pair.
@@ -91,6 +131,8 @@ class SignalRepository(BaseRepository[Signal]):
             stmt = stmt.where(Signal.analysis_run_id == analysis_run_id)
         if signal_type is not None:
             stmt = stmt.where(Signal.signal_type == signal_type)
+        if outcome is not None:
+            stmt = stmt.where(Signal.outcome == outcome)
         if eager_load_pair:
             stmt = stmt.options(selectinload(Signal.pair))
         stmt = stmt.order_by(desc(Signal.generated_at)).offset(offset).limit(limit)
@@ -103,6 +145,7 @@ class SignalRepository(BaseRepository[Signal]):
         pair_id: int | None = None,
         analysis_run_id: uuid.UUID | None = None,
         signal_type: SignalType | None = None,
+        outcome: SignalOutcome | None = None,
     ) -> int:
         """Row count matching the same filters as :meth:`list_paginated`.
 
@@ -116,6 +159,8 @@ class SignalRepository(BaseRepository[Signal]):
             stmt = stmt.where(Signal.analysis_run_id == analysis_run_id)
         if signal_type is not None:
             stmt = stmt.where(Signal.signal_type == signal_type)
+        if outcome is not None:
+            stmt = stmt.where(Signal.outcome == outcome)
         result = await self._session.execute(stmt)
         return int(result.scalar_one())
 

@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.config import Settings, get_settings
-from app.controllers import AnalysisController
+from app.controllers import AnalysisController, OutcomeController
 from app.database import Database
 from app.error_handlers import register_exception_handlers
 from app.logging_config import configure_logging
@@ -25,14 +25,15 @@ from app.services.market_data import (
     MarketDataProvider,
     build_market_data_provider,
 )
-from app.tasks import AnalysisJob, Scheduler
+from app.tasks import AnalysisJob, OutcomeJob, Scheduler
 from app.views import api_v1_router
 
 logger = logging.getLogger(__name__)
 
-#: Stable scheduler job id — kept as a constant so health checks / future
-#: admin endpoints can reference the same job without string drift.
+#: Stable scheduler job ids — kept as constants so health checks / future
+#: admin endpoints can reference the same jobs without string drift.
 ANALYSIS_JOB_ID = "analysis-cycle"
+OUTCOME_JOB_ID = "outcome-cycle"
 
 
 def _build_database(settings: Settings) -> Database:
@@ -90,15 +91,35 @@ async def lifespan(app: FastAPI):
     )
     app.state.analysis_controller = analysis_controller
 
+    # The outcome controller is the measurement pipeline: it re-checks open
+    # signals against fresh candles. Like the analysis controller it owns its own
+    # sessions (background unit of work, no request behind it) and is reused for
+    # every sweep.
+    outcome_controller = OutcomeController(
+        database=database,
+        market_data=market_data,
+        settings=settings,
+    )
+    app.state.outcome_controller = outcome_controller
+
     # Register the analysis cadence with the real pipeline. `run_scheduled`
     # matches the job's `() -> Awaitable[None]` contract; the job wraps it with
     # error containment so a crashing cycle never kills the schedule.
-    job = AnalysisJob(analysis_controller.run_scheduled)
+    analysis_job = AnalysisJob(analysis_controller.run_scheduled)
     scheduler.add_interval_job(
-        job.run,
+        analysis_job.run,
         minutes=settings.analysis_interval_minutes,
         job_id=ANALYSIS_JOB_ID,
         name="Scheduled market analysis",
+    )
+    # The outcome sweep runs on its own (tighter) cadence so closes are detected
+    # promptly without coupling to the heavier analysis interval.
+    outcome_job = OutcomeJob(outcome_controller.run_scheduled)
+    scheduler.add_interval_job(
+        outcome_job.run,
+        minutes=settings.outcome_interval_minutes,
+        job_id=OUTCOME_JOB_ID,
+        name="Scheduled outcome tracking",
     )
     if settings.scheduler_enabled:
         scheduler.start()
