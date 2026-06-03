@@ -1,4 +1,5 @@
 export type SignalDirection = "buy" | "sell" | "neutral";
+export type SignalTradeStyle = "scalp" | "swing";
 export type SignalStatus = "active" | "watchlist" | "expired";
 export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
@@ -59,6 +60,7 @@ export type Signal = {
   symbol: string;
   displayName: string;
   direction: SignalDirection;
+  tradeStyle: SignalTradeStyle;
   status: SignalStatus;
   confidence: number;
   entryPrice: number;

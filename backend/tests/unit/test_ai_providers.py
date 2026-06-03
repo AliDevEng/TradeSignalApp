@@ -21,7 +21,9 @@ from app.services.ai import (
     AIResponseError,
     AnalysisContext,
     AnthropicProvider,
+    DualSignalDraft,
     GroqProvider,
+    PriorSignal,
     SignalDraft,
     TimeframeView,
     build_ai_provider,
@@ -30,9 +32,19 @@ from app.services.ai.base import BaseAIProvider
 from app.services.indicators import IndicatorSnapshot
 from app.services.market_data import Candle
 
+# A single signal object — still used as a raw ``_complete`` payload by the
+# provider-adapter tests (which never parse it).
 _VALID_BUY = (
     '{"direction":"buy","confidence":0.8,"entry":1.10,'
     '"stop_loss":1.09,"take_profits":[1.12,1.13],"rationale":"uptrend"}'
+)
+
+# The real analyze() contract: a dual object with a scalp and a swing.
+_VALID_DUAL = (
+    '{"scalp":{"direction":"buy","confidence":0.6,"entry":1.105,'
+    '"stop_loss":1.10,"take_profits":[1.11],"rationale":"scalp long"},'
+    '"swing":{"direction":"sell","confidence":0.8,"entry":1.10,'
+    '"stop_loss":1.12,"take_profits":[1.08,1.06],"rationale":"swing short"}}'
 )
 
 
@@ -78,17 +90,42 @@ class _FakeProvider(BaseAIProvider):
 # ── BaseAIProvider.analyze ───────────────────────────────────────────────────
 
 
-async def test_analyze_returns_signal_draft():
-    provider = _FakeProvider(_VALID_BUY)
-    draft = await provider.analyze(_context())
+async def test_analyze_returns_dual_signal_draft():
+    provider = _FakeProvider(_VALID_DUAL)
+    dual = await provider.analyze(_context())
 
-    assert isinstance(draft, SignalDraft)
-    assert draft.direction == "buy"
-    assert draft.entry == Decimal("1.10")
-    assert draft.take_profits == [Decimal("1.12"), Decimal("1.13")]
-    # The prompt actually carried the instrument + indicators.
+    assert isinstance(dual, DualSignalDraft)
+    assert dual.scalp.direction == "buy"
+    assert dual.scalp.entry == Decimal("1.105")
+    assert dual.swing.direction == "sell"
+    assert dual.swing.take_profits == [Decimal("1.08"), Decimal("1.06")]
+    # The prompt actually carried the instrument, and the contract names both styles.
     assert "EURUSD" in provider.user
-    assert "direction" in provider.system
+    assert "scalp" in provider.system and "swing" in provider.system
+
+
+async def test_user_prompt_includes_prior_signals_for_keep_or_adjust():
+    base = _context()
+    context = AnalysisContext(
+        symbol=base.symbol,
+        primary_timeframe=base.primary_timeframe,
+        views=base.views,
+        current_scalp=PriorSignal(
+            direction="buy",
+            confidence=0.6,
+            entry=Decimal("1.10"),
+            stop_loss=Decimal("1.09"),
+            take_profits=(Decimal("1.12"),),
+            generated_at="2026-06-01T12:00:00+00:00",
+        ),
+        current_swing=None,
+    )
+    provider = _FakeProvider(_VALID_DUAL)
+    await provider.analyze(context)
+
+    assert "Current open signals" in provider.user
+    assert "SCALP: buy" in provider.user
+    assert "SWING: none open yet" in provider.user
 
 
 async def test_user_prompt_renders_all_timeframes_high_to_low():
@@ -109,7 +146,7 @@ async def test_user_prompt_renders_all_timeframes_high_to_low():
             TimeframeView(timeframe="1h", indicators=IndicatorSnapshot(), recent_candles=[candle]),
         ),
     )
-    provider = _FakeProvider(_VALID_BUY)
+    provider = _FakeProvider(_VALID_DUAL)
     await provider.analyze(context)
 
     user = provider.user
@@ -121,18 +158,28 @@ async def test_user_prompt_renders_all_timeframes_high_to_low():
     assert user.index("Timeframe: 1d") < user.index("Timeframe: 5m")
 
 
-async def test_analyze_rejects_directional_signal_without_entry():
-    reply = '{"direction":"sell","confidence":0.7,"entry":null,"take_profits":[]}'
+async def test_analyze_rejects_signal_without_entry():
+    # The swing draft is directional but carries no entry — must be rejected.
+    reply = (
+        '{"scalp":{"direction":"buy","confidence":0.6,"entry":1.1,'
+        '"stop_loss":1.0,"take_profits":[1.2]},'
+        '"swing":{"direction":"sell","confidence":0.7,"entry":null,"take_profits":[]}}'
+    )
     provider = _FakeProvider(reply)
     with pytest.raises(AIResponseError, match="entry"):
         await provider.analyze(_context())
 
 
-async def test_analyze_allows_neutral_without_prices():
-    reply = '{"direction":"neutral","confidence":0.4,"rationale":"chop"}'
-    draft = await _FakeProvider(reply).analyze(_context())
-    assert draft.direction == "neutral"
-    assert draft.entry is None
+async def test_analyze_rejects_neutral_signal():
+    # Always-on product rule: a neutral reply is rejected (fails the pair), not
+    # persisted as a no-trade.
+    reply = (
+        '{"scalp":{"direction":"neutral","confidence":0.4,"rationale":"chop"},'
+        '"swing":{"direction":"buy","confidence":0.6,"entry":1.1,'
+        '"stop_loss":1.0,"take_profits":[1.2]}}'
+    )
+    with pytest.raises(AIResponseError, match="directional"):
+        await _FakeProvider(reply).analyze(_context())
 
 
 # ── _extract_json ────────────────────────────────────────────────────────────

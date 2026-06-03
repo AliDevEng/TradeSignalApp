@@ -1,4 +1,5 @@
 export type ApiSignalDirection = "buy" | "sell" | "neutral";
+export type ApiSignalType = "scalp" | "swing";
 export type ApiAnalysisRunStatus = "pending" | "running" | "success" | "partial" | "failed";
 export type ApiAnalysisRunTrigger = "scheduler" | "manual";
 
@@ -43,6 +44,7 @@ export type ApiSignal = {
   pair_symbol: string | null;
   analysis_run_id: string | null;
   direction: ApiSignalDirection;
+  signal_type: ApiSignalType;
   confidence: number;
   entry_price: string;
   stop_loss: string | null;

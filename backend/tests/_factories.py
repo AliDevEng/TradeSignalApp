@@ -23,6 +23,7 @@ from app.models import (
     Pair,
     Signal,
     SignalDirection,
+    SignalType,
 )
 
 _FIXED_NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
@@ -55,6 +56,7 @@ def make_signal(
     pair_id: int | None = None,
     analysis_run_id: uuid.UUID | None = None,
     direction: SignalDirection = SignalDirection.BUY,
+    signal_type: SignalType = SignalType.SWING,
     confidence: float = 0.75,
     entry_price: Decimal = Decimal("1.10000000"),
     stop_loss: Decimal | None = Decimal("1.09000000"),
@@ -73,6 +75,7 @@ def make_signal(
         pair_id=pair_id if pair_id is not None else pair.id,
         analysis_run_id=analysis_run_id,
         direction=direction,
+        signal_type=signal_type,
         confidence=confidence,
         entry_price=entry_price,
         stop_loss=stop_loss,

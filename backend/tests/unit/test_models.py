@@ -222,16 +222,26 @@ def test_signal_check_constraints_present():
     assert "ck_signals_take_profit_3_positive_when_set" in constraint_names
 
 
-def test_signal_unique_constraint_per_run_per_pair():
-    constraint_names = {c.name for c in Signal.__table__.constraints if c.name}
-    assert "uq_signals_pair_id" not in constraint_names  # would be too strict
-    # Custom name set on the unique constraint:
-    assert any(c.name == "one_signal_per_run_per_pair" for c in Signal.__table__.constraints)
+def test_signal_unique_constraint_per_run_per_pair_style():
+    constraint = next(
+        c for c in Signal.__table__.constraints if c.name == "one_signal_per_run_per_pair_style"
+    )
+    # A run emits one signal per pair *per style*, so the style is part of the key.
+    assert {col.name for col in constraint.columns} == {
+        "pair_id",
+        "analysis_run_id",
+        "signal_type",
+    }
+
+
+def test_signal_has_signal_type_column():
+    assert "signal_type" in Signal.__table__.columns
 
 
 def test_signal_composite_index_present():
     index_names = {ix.name for ix in Signal.__table__.indexes}
     assert "ix_signals_pair_id_generated_at" in index_names
+    assert "ix_signals_pair_id_signal_type_generated_at" in index_names
 
 
 def test_signal_direction_enum_members():

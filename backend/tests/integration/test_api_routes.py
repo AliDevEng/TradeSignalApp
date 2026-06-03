@@ -84,7 +84,9 @@ async def test_list_signals_forwards_pagination_and_filters(client, signals_ctrl
     signals_ctrl.list_signals.return_value = Page(items=[], total=0)
     run_id = uuid.uuid4()
 
-    await client.get(f"/api/v1/signals?page=2&per_page=5&pair=EURUSD&run_id={run_id}")
+    await client.get(
+        f"/api/v1/signals?page=2&per_page=5&pair=EURUSD&run_id={run_id}&signal_type=scalp"
+    )
 
     kwargs = signals_ctrl.list_signals.await_args.kwargs
     assert kwargs == {
@@ -92,7 +94,13 @@ async def test_list_signals_forwards_pagination_and_filters(client, signals_ctrl
         "limit": 5,
         "pair_symbol": "EURUSD",
         "analysis_run_id": run_id,
+        "signal_type": "scalp",
     }
+
+
+async def test_list_signals_rejects_unknown_style(client, signals_ctrl):
+    resp = await client.get("/api/v1/signals?signal_type=daytrade")
+    assert resp.status_code == 422
 
 
 async def test_list_signals_rejects_invalid_pagination(client, signals_ctrl):
@@ -211,7 +219,7 @@ async def test_list_pair_signals_uses_signal_controller(client, signals_ctrl):
 
     assert resp.status_code == 200
     assert len(body["data"]) == 1
-    signals_ctrl.list_latest_for_pair.assert_awaited_once_with("EURUSD", limit=5)
+    signals_ctrl.list_latest_for_pair.assert_awaited_once_with("EURUSD", limit=5, signal_type=None)
 
 
 async def test_list_pair_signals_limit_validation(client, signals_ctrl):

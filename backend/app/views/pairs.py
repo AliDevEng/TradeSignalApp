@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query
 from app.dependencies import PairControllerDep, SignalControllerDep
 from app.schemas.common import APIResponse
 from app.schemas.pair import PairResponse
-from app.schemas.signal import SignalResponse
+from app.schemas.signal import SignalResponse, SignalType
 
 router = APIRouter(prefix="/pairs", tags=["Pairs"])
 
@@ -61,6 +61,10 @@ async def list_pair_signals(
         le=100,
         description="How many of the most-recent signals to return.",
     ),
+    signal_type: SignalType | None = Query(
+        default=None,
+        description="Filter by trade style (scalp/swing).",
+    ),
 ) -> APIResponse[list[SignalResponse]]:
-    signals = await controller.list_latest_for_pair(symbol, limit=limit)
+    signals = await controller.list_latest_for_pair(symbol, limit=limit, signal_type=signal_type)
     return APIResponse(data=signals)

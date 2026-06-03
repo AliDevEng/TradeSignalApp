@@ -26,6 +26,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 SignalDirection = Literal["buy", "sell", "neutral"]
+SignalType = Literal["scalp", "swing"]
 
 
 class SignalResponse(BaseModel):
@@ -42,6 +43,9 @@ class SignalResponse(BaseModel):
     analysis_run_id: uuid.UUID | None = None
 
     direction: SignalDirection
+    # Trade horizon this signal is framed on. A run emits one of each style per
+    # pair (scalp = short-term/lower TF, swing = higher TF).
+    signal_type: SignalType
     confidence: float = Field(ge=0.0, le=1.0)
 
     entry_price: Decimal

@@ -6,12 +6,21 @@ import type {
   SignalStatus,
   SignalTarget,
   SignalTargetLabel,
+  SignalTradeStyle,
   Timeframe,
   TradingPair
 } from "@/types/signal";
 
 const timeframeFallback: Timeframe = "1h";
 const supportedTimeframes = new Set<Timeframe>(["1m", "5m", "15m", "30m", "1h", "4h", "1d"]);
+const tradeStyleFallback: SignalTradeStyle = "swing";
+const supportedTradeStyles = new Set<SignalTradeStyle>(["scalp", "swing"]);
+
+function normalizeTradeStyle(value: string | null | undefined): SignalTradeStyle {
+  return value && supportedTradeStyles.has(value as SignalTradeStyle)
+    ? (value as SignalTradeStyle)
+    : tradeStyleFallback;
+}
 
 function parsePrice(value: string | null): number | null {
   if (value === null) {
@@ -168,6 +177,7 @@ export function mapApiSignal(signal: ApiSignal, pairs: TradingPair[]): Signal {
     symbol,
     displayName: pair?.displayName ?? symbol,
     direction: signal.direction,
+    tradeStyle: normalizeTradeStyle(signal.signal_type),
     status: deriveStatus(signal),
     confidence: signal.confidence,
     entryPrice,

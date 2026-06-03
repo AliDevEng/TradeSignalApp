@@ -14,6 +14,7 @@ const signal: Signal = {
   symbol: "XAUUSD",
   displayName: "Gold / US Dollar",
   direction: "buy",
+  tradeStyle: "swing",
   status: "active",
   confidence: 0.8,
   entryPrice: 2368.42,

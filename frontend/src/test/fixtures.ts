@@ -9,6 +9,7 @@ export function buildSignal(overrides: Partial<Signal> = {}): Signal {
     symbol: "XAUUSD",
     displayName: "Gold / US Dollar",
     direction: "buy",
+    tradeStyle: "swing",
     status: "active",
     confidence: 0.84,
     entryPrice: 2368.42,

@@ -25,9 +25,9 @@ from types import SimpleNamespace
 import pytest
 from app.controllers import analysis_controller as ac
 from app.controllers.analysis_controller import AnalysisController
-from app.models import AnalysisRunStatus, AnalysisRunTrigger
+from app.models import AnalysisRunStatus, AnalysisRunTrigger, SignalType
 from app.services import ServiceError
-from app.services.ai import SignalDraft
+from app.services.ai import DualSignalDraft, SignalDraft
 
 from tests._factories import make_pair
 
@@ -44,6 +44,8 @@ class Store:
     active_pairs: list = field(default_factory=list)
     runs: dict = field(default_factory=dict)
     signals: list = field(default_factory=list)
+    # Per-pair currently-open signals fed back into the AI (pair_id -> {style: signal}).
+    current_by_pair: dict = field(default_factory=dict)
     commits: int = 0
     fail_add_all: bool = False  # simulate a persistence blip during finalisation
 
@@ -101,6 +103,10 @@ class _FakeSignalRepo:
             raise RuntimeError("DB blip while persisting signals")
         self._store.signals.extend(signals)
 
+    async def current_for_pair(self, pair_id):
+        seeded = self._store.current_by_pair.get(pair_id, {})
+        return {style: seeded.get(style) for style in SignalType}
+
 
 # ── Fake services ────────────────────────────────────────────────────────────
 
@@ -132,17 +138,21 @@ class _FakeAI:
     def __init__(
         self,
         *,
-        draft: SignalDraft | None = None,
+        dual: DualSignalDraft | None = None,
         per_symbol: dict | None = None,
         fail_symbols: set[str] | None = None,
         crash_symbols: set[str] | None = None,
     ) -> None:
-        self._draft = draft
+        self._dual = dual
         self._per_symbol = per_symbol or {}
         self._fail = fail_symbols or set()
         self._crash = crash_symbols or set()
+        # Records every context analyse() was called with, so tests can assert
+        # the keep/adjust prior signals were forwarded.
+        self.contexts: list = []
 
     async def analyze(self, context):
+        self.contexts.append(context)
         sym = context.symbol
         if sym in self._fail:
             raise ServiceError(f"AI failed for {sym}")
@@ -150,13 +160,13 @@ class _FakeAI:
             raise ValueError(f"unexpected boom for {sym}")
         if sym in self._per_symbol:
             return self._per_symbol[sym]
-        return self._draft or _buy_draft()
+        return self._dual or _dual_draft()
 
 
-def _buy_draft(entry="1.10000000", tps=("1.12000000", "1.15000000")):
+def _draft(direction="buy", entry="1.10000000", tps=("1.12000000", "1.15000000"), confidence=0.72):
     return SignalDraft(
-        direction="buy",
-        confidence=0.72,
+        direction=direction,
+        confidence=confidence,
         entry=Decimal(entry),
         stop_loss=Decimal("1.09000000"),
         take_profits=[Decimal(t) for t in tps],
@@ -164,8 +174,13 @@ def _buy_draft(entry="1.10000000", tps=("1.12000000", "1.15000000")):
     )
 
 
-def _neutral_draft():
-    return SignalDraft(direction="neutral", confidence=0.4, rationale="no edge")
+def _dual_draft(scalp: SignalDraft | None = None, swing: SignalDraft | None = None):
+    return DualSignalDraft(scalp=scalp or _draft(), swing=swing or _draft())
+
+
+def _by_style(store: Store) -> dict:
+    """Index the persisted signals by their style for per-style assertions."""
+    return {s.signal_type: s for s in store.signals}
 
 
 # ── Fixtures / builder ───────────────────────────────────────────────────────
@@ -179,11 +194,13 @@ def _patch_repositories(monkeypatch):
     monkeypatch.setattr(ac, "SignalRepository", _FakeSignalRepo)
 
 
-def _build(store: Store, *, market_data=None, ai=None) -> AnalysisController:
+def _build(store: Store, *, market_data=None, ai=None, timeframes=None) -> AnalysisController:
     settings = SimpleNamespace(
         analysis_timeframe="1h",
-        analysis_timeframes=["1h"],
+        analysis_timeframes=timeframes or ["1h"],
         analysis_candle_count=200,
+        signal_scalp_ttl_minutes=240,
+        signal_swing_ttl_minutes=4320,
     )
     return AnalysisController(
         database=_FakeDatabase(store),  # type: ignore[arg-type]
@@ -198,7 +215,7 @@ def _build(store: Store, *, market_data=None, ai=None) -> AnalysisController:
 # ── Happy path ───────────────────────────────────────────────────────────────
 
 
-async def test_all_pairs_succeed_marks_success_and_persists_signals():
+async def test_all_pairs_succeed_marks_success_and_persists_two_signals_each():
     store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD"), make_pair(id=2, symbol="GBPUSD")])
     ctrl = _build(store)
 
@@ -208,22 +225,25 @@ async def test_all_pairs_succeed_marks_success_and_persists_signals():
     assert run.pairs_processed == 2
     assert run.pairs_failed == 0
     assert run.error_message is None
-    assert len(store.signals) == 2
+    # Two signals (scalp + swing) per processed pair.
+    assert len(store.signals) == 4
     # Three-phase: exactly two transactions (open, finalise) — none across IO.
     assert ctrl._database.session_count == 2  # type: ignore[attr-defined]
 
 
-async def test_neutral_draft_is_success_without_a_signal():
-    """A 'no trade this cycle' outcome is a successful analysis, not a signal."""
+async def test_success_emits_one_scalp_and_one_swing_per_pair():
+    """Every successful pair yields exactly one scalp and one swing signal."""
     store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
-    ctrl = _build(store, ai=_FakeAI(draft=_neutral_draft()))
+    ctrl = _build(store)
 
     run = await ctrl.run_analysis()
 
     assert run.status is AnalysisRunStatus.SUCCESS
-    assert run.pairs_processed == 1
-    assert run.pairs_failed == 0
-    assert store.signals == []
+    styles = sorted(s.signal_type for s in store.signals)
+    assert styles == [SignalType.SCALP, SignalType.SWING]
+    # Each carries a style-specific expiry (scalp ages out before swing).
+    by_style = _by_style(store)
+    assert by_style[SignalType.SCALP].expires_at < by_style[SignalType.SWING].expires_at
 
 
 async def test_no_active_pairs_is_a_clean_success_noop():
@@ -249,7 +269,8 @@ async def test_one_failed_pair_yields_partial_status():
     assert run.status is AnalysisRunStatus.PARTIAL
     assert run.pairs_processed == 1
     assert run.pairs_failed == 1
-    assert len(store.signals) == 1
+    # The one surviving pair still produces its scalp + swing.
+    assert len(store.signals) == 2
     assert run.error_message is not None
     assert "GBPUSD" in run.error_message
 
@@ -285,7 +306,39 @@ async def test_unexpected_exception_is_contained_as_a_pair_failure():
 
     assert run.status is AnalysisRunStatus.PARTIAL
     assert run.pairs_failed == 1
-    assert len(store.signals) == 1
+    assert len(store.signals) == 2
+
+
+# ── Keep-or-adjust feedback ──────────────────────────────────────────────────
+
+
+async def test_prior_signals_are_forwarded_to_the_ai_context():
+    """The pair's currently-open scalp/swing are fed back so the AI can adjust."""
+    pair = make_pair(id=1, symbol="EURUSD")
+    prior_scalp = SimpleNamespace(
+        direction=SimpleNamespace(value="sell"),
+        confidence=0.5,
+        entry_price=Decimal("1.20000000"),
+        stop_loss=Decimal("1.21000000"),
+        take_profit=Decimal("1.18000000"),
+        take_profit_2=None,
+        take_profit_3=None,
+        generated_at=_NOW,
+    )
+    store = Store(
+        active_pairs=[pair],
+        current_by_pair={1: {SignalType.SCALP: prior_scalp, SignalType.SWING: None}},
+    )
+    ai = _FakeAI()
+    ctrl = _build(store, ai=ai)
+
+    await ctrl.run_analysis()
+
+    (context,) = ai.contexts
+    assert context.current_scalp is not None
+    assert context.current_scalp.direction == "sell"
+    assert context.current_scalp.entry == Decimal("1.20000000")
+    assert context.current_swing is None
 
 
 # ── Trigger tagging ──────────────────────────────────────────────────────────
@@ -332,14 +385,14 @@ async def test_finalisation_failure_marks_run_failed_and_reraises():
 
 
 async def test_full_take_profit_ladder_is_persisted():
-    """All emitted TP levels map positionally onto take_profit/_2/_3."""
+    """All emitted TP levels map positionally onto take_profit/_2/_3 (per style)."""
     store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
-    tps = ("1.12000000", "1.15000000", "1.18000000")
-    ctrl = _build(store, ai=_FakeAI(draft=_buy_draft(tps=tps)))
+    swing = _draft(tps=("1.12000000", "1.15000000", "1.18000000"))
+    ctrl = _build(store, ai=_FakeAI(dual=_dual_draft(swing=swing)))
 
     await ctrl.run_analysis()
 
-    (signal,) = store.signals
+    signal = _by_style(store)[SignalType.SWING]
     assert signal.take_profit == Decimal("1.12000000")
     assert signal.take_profit_2 == Decimal("1.15000000")
     assert signal.take_profit_3 == Decimal("1.18000000")
@@ -348,28 +401,36 @@ async def test_full_take_profit_ladder_is_persisted():
 async def test_missing_take_profit_levels_are_null():
     """A draft with fewer than three targets leaves the higher levels NULL."""
     store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
-    ctrl = _build(store, ai=_FakeAI(draft=_buy_draft(tps=("1.12000000",))))
+    scalp = _draft(tps=("1.12000000",))
+    ctrl = _build(store, ai=_FakeAI(dual=_dual_draft(scalp=scalp)))
 
     await ctrl.run_analysis()
 
-    (signal,) = store.signals
+    signal = _by_style(store)[SignalType.SCALP]
     assert signal.take_profit == Decimal("1.12000000")
     assert signal.take_profit_2 is None
     assert signal.take_profit_3 is None
 
 
-async def test_signal_carries_provenance_and_snapshot():
+async def test_signals_carry_provenance_and_style_specific_timeframe():
     store = Store(active_pairs=[make_pair(id=5, symbol="XAUUSD")])
-    ctrl = _build(store)
+    # Distinct low/high timeframes so scalp frames on 5m and swing on 1d.
+    ctrl = _build(store, timeframes=["5m", "1h", "1d"])
 
     await ctrl.run_analysis()
 
-    (signal,) = store.signals
-    assert signal.pair_id == 5
-    assert signal.ai_provider == "groq"
-    # Indicators are now keyed by timeframe (one entry per analysed timeframe).
-    assert signal.indicators_snapshot == {"1h": {"rsi": 30.0}}
-    assert signal.timeframe == "1h"
+    by_style = _by_style(store)
+    for signal in store.signals:
+        assert signal.pair_id == 5
+        assert signal.ai_provider == "groq"
+        # Indicators are keyed by timeframe (one entry per analysed timeframe).
+        assert signal.indicators_snapshot == {
+            "5m": {"rsi": 30.0},
+            "1h": {"rsi": 30.0},
+            "1d": {"rsi": 30.0},
+        }
+    assert by_style[SignalType.SCALP].timeframe == "5m"
+    assert by_style[SignalType.SWING].timeframe == "1d"
 
 
 # ── Pure helpers ─────────────────────────────────────────────────────────────

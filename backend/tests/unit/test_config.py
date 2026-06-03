@@ -238,7 +238,7 @@ def test_iteration3_defaults():
     s = Settings(**_base_env(), _env_file=None)
     # AI
     assert s.ai_temperature == 0.2
-    assert s.ai_max_tokens == 1024
+    assert s.ai_max_tokens == 2048
     assert s.ai_timeout_seconds == 30.0
     # Market data
     assert s.twelve_data_base_url == "https://api.twelvedata.com"

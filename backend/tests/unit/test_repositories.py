@@ -32,7 +32,7 @@ from app.database.repository import (
     PairRepository,
     SignalRepository,
 )
-from app.models import AnalysisRun, AnalysisRunStatus, Pair, Signal
+from app.models import AnalysisRun, AnalysisRunStatus, Pair, Signal, SignalType
 from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -370,6 +370,41 @@ async def test_signal_list_paginated_applies_filters_and_pagination():
     assert "order by signals.generated_at desc" in sql
     assert "limit 20" in sql
     assert "offset 40" in sql
+
+
+async def test_signal_list_paginated_applies_signal_type_filter():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    await repo.list_paginated(offset=0, limit=20, signal_type=SignalType.SCALP)
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "signal_type = 'scalp'" in sql
+
+
+async def test_signal_latest_for_pair_applies_signal_type_filter():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    await repo.latest_for_pair(pair_id=9, limit=1, signal_type=SignalType.SWING)
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "pair_id = 9" in sql
+    assert "signal_type = 'swing'" in sql
+
+
+async def test_signal_current_for_pair_returns_one_per_style():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    current = await repo.current_for_pair(pair_id=3)
+
+    # Every style is keyed, even when no signal exists for it.
+    assert set(current) == set(SignalType)
+    assert all(v is None for v in current.values())
 
 
 async def test_signal_list_paginated_attaches_loader_option_when_requested():

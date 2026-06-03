@@ -8,13 +8,14 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui/Button";
 import { useSignalStore, type SignalSort } from "@/store/signalStore";
-import type { SignalDirection, SignalStatus, TradingPair } from "@/types/signal";
+import type { SignalDirection, SignalStatus, SignalTradeStyle, TradingPair } from "@/types/signal";
 
 type SignalFiltersProps = {
   pairs: TradingPair[];
 };
 
 const directions: Array<"all" | SignalDirection> = ["all", "buy", "sell", "neutral"];
+const tradeStyles: Array<"all" | SignalTradeStyle> = ["all", "scalp", "swing"];
 const statuses: Array<"all" | SignalStatus> = ["all", "active", "watchlist", "expired"];
 const sorts: Array<{ label: string; value: SignalSort }> = [
   { label: "Confidence", value: "confidence" },
@@ -24,6 +25,7 @@ const sorts: Array<{ label: string; value: SignalSort }> = [
 
 const filterSchema = z.object({
   direction: z.enum(directions),
+  tradeStyle: z.enum(tradeStyles),
   status: z.enum(statuses),
   pair: z.string().min(1, "Choose a pair filter."),
   sort: z.enum(["confidence", "newest", "symbol"])
@@ -33,6 +35,7 @@ type SignalFilterFormValues = z.infer<typeof filterSchema>;
 
 const defaultFilters: SignalFilterFormValues = {
   direction: "all",
+  tradeStyle: "all",
   status: "all",
   pair: "all",
   sort: "confidence"
@@ -41,6 +44,7 @@ const defaultFilters: SignalFilterFormValues = {
 function readFiltersFromSearchParams(searchParams: URLSearchParams): SignalFilterFormValues {
   const candidate = {
     direction: searchParams.get("direction") ?? defaultFilters.direction,
+    tradeStyle: searchParams.get("style") ?? defaultFilters.tradeStyle,
     status: searchParams.get("status") ?? defaultFilters.status,
     pair: searchParams.get("pair") ?? defaultFilters.pair,
     sort: searchParams.get("sort") ?? defaultFilters.sort
@@ -55,6 +59,10 @@ function writeFiltersToSearchParams(values: SignalFilterFormValues): string {
 
   if (values.direction !== defaultFilters.direction) {
     nextParams.set("direction", values.direction);
+  }
+
+  if (values.tradeStyle !== defaultFilters.tradeStyle) {
+    nextParams.set("style", values.tradeStyle);
   }
 
   if (values.status !== defaultFilters.status) {
@@ -77,10 +85,12 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const direction = useSignalStore((state) => state.direction);
+  const tradeStyle = useSignalStore((state) => state.tradeStyle);
   const status = useSignalStore((state) => state.status);
   const pair = useSignalStore((state) => state.pair);
   const sort = useSignalStore((state) => state.sort);
   const setDirection = useSignalStore((state) => state.setDirection);
+  const setTradeStyle = useSignalStore((state) => state.setTradeStyle);
   const setStatus = useSignalStore((state) => state.setStatus);
   const setPair = useSignalStore((state) => state.setPair);
   const setSort = useSignalStore((state) => state.setSort);
@@ -99,6 +109,7 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
   useEffect(() => {
     const candidate = {
       direction: values.direction ?? direction,
+      tradeStyle: values.tradeStyle ?? tradeStyle,
       status: values.status ?? status,
       pair: values.pair ?? pair,
       sort: values.sort ?? sort
@@ -110,6 +121,7 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
     }
 
     setDirection(parsed.data.direction);
+    setTradeStyle(parsed.data.tradeStyle);
     setStatus(parsed.data.status);
     setPair(parsed.data.pair);
     setSort(parsed.data.sort);
@@ -130,12 +142,15 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
     setPair,
     setSort,
     setStatus,
+    setTradeStyle,
     sort,
     status,
+    tradeStyle,
     values.direction,
     values.pair,
     values.sort,
-    values.status
+    values.status,
+    values.tradeStyle
   ]);
 
   function resetFilters() {
@@ -157,7 +172,7 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
         </Button>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_180px]">
+      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr_180px]">
         <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
           Direction
           <select
@@ -169,6 +184,22 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
             {directions.map((item) => (
               <option key={item} value={item}>
                 {item === "all" ? "All directions" : item.toUpperCase()}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+          Style
+          <select
+            className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
+            {...form.register("tradeStyle", {
+              validate: (value) => filterSchema.shape.tradeStyle.safeParse(value).success
+            })}
+          >
+            {tradeStyles.map((item) => (
+              <option key={item} value={item}>
+                {item === "all" ? "All styles" : item.charAt(0).toUpperCase() + item.slice(1)}
               </option>
             ))}
           </select>

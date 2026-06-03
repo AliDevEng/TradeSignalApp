@@ -100,12 +100,32 @@ class TimeframeView:
 
 
 @dataclass(frozen=True, slots=True)
+class PriorSignal:
+    """A compact snapshot of the pair's current signal of a given style.
+
+    Fed back into the prompt so the model can *keep or adjust* the open idea
+    against fresh data rather than starting from scratch each run. Carries only
+    what the model needs to recognise its previous call — not the full ORM row.
+    """
+
+    direction: str
+    confidence: float
+    entry: Decimal | None
+    stop_loss: Decimal | None
+    take_profits: tuple[Decimal, ...]
+    generated_at: str  # ISO 8601
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisContext:
     """Everything the model needs to reason about one pair, in one place.
 
     Carries several :class:`TimeframeView` s so the provider can perform a
     top-down, multi-timeframe read. ``primary_timeframe`` is the decision
     timeframe a resulting signal is framed on and recorded against.
+
+    ``current_scalp`` / ``current_swing`` are the pair's currently-open signals
+    (if any) of each style, fed back so the model keeps or adjusts them.
 
     Frozen so a provider can't accidentally mutate shared inputs when the
     same context is (in future) fanned out to multiple models for comparison.
@@ -114,6 +134,8 @@ class AnalysisContext:
     symbol: str
     primary_timeframe: str
     views: tuple[TimeframeView, ...]
+    current_scalp: PriorSignal | None = None
+    current_swing: PriorSignal | None = None
 
 
 class SignalDraft(BaseModel):
@@ -165,14 +187,27 @@ class SignalDraft(BaseModel):
         return value
 
 
+class DualSignalDraft(BaseModel):
+    """The model's full output for one pair: a scalp *and* a swing idea.
+
+    Each run frames two trade horizons from the same multi-timeframe evidence —
+    a short-term ``scalp`` and a higher-timeframe ``swing`` — returned together
+    in one call so the model reasons about them jointly (and we pay one request
+    per pair, not two).
+    """
+
+    scalp: SignalDraft
+    swing: SignalDraft
+
+
 class AIProvider(abc.ABC):
-    """Turns an :class:`AnalysisContext` into a :class:`SignalDraft`."""
+    """Turns an :class:`AnalysisContext` into a :class:`DualSignalDraft`."""
 
     provider_name: str
     model: str
 
     @abc.abstractmethod
-    async def analyze(self, context: AnalysisContext) -> SignalDraft: ...
+    async def analyze(self, context: AnalysisContext) -> DualSignalDraft: ...
 
     @abc.abstractmethod
     async def aclose(self) -> None:
@@ -187,22 +222,24 @@ class BaseAIProvider(AIProvider):
     identical across providers.
     """
 
-    async def analyze(self, context: AnalysisContext) -> SignalDraft:
+    async def analyze(self, context: AnalysisContext) -> DualSignalDraft:
         system = self._build_system_prompt()
         user = self._build_user_prompt(context)
         raw = await self._complete(system=system, user=user)
-        draft = self._parse_response(raw)
-        self._assert_actionable(draft)
+        dual = self._parse_response(raw)
+        self._assert_actionable(dual.scalp, style="scalp")
+        self._assert_actionable(dual.swing, style="swing")
         logger.info(
-            "AI signal for %s/%s: %s (confidence=%.2f) via %s/%s",
+            "AI signals for %s: scalp=%s (%.2f) swing=%s (%.2f) via %s/%s",
             context.symbol,
-            context.primary_timeframe,
-            draft.direction,
-            draft.confidence,
+            dual.scalp.direction,
+            dual.scalp.confidence,
+            dual.swing.direction,
+            dual.swing.confidence,
             self.provider_name,
             self.model,
         )
-        return draft
+        return dual
 
     @abc.abstractmethod
     async def _complete(self, *, system: str, user: str) -> str:
@@ -218,26 +255,32 @@ class BaseAIProvider(AIProvider):
         """Editable persona (from file) + the strict JSON output contract.
 
         The contract is built here, not in the file, so the documented keys
-        always match what :class:`SignalDraft` will accept on the way back.
+        always match what :class:`DualSignalDraft` will accept on the way back.
         """
-        keys = ", ".join(
+        signal_keys = ", ".join(
             [
-                '"direction" (one of "buy","sell","neutral")',
-                '"confidence" (number 0..1)',
-                '"entry" (number or null)',
-                '"stop_loss" (number or null)',
-                f'"take_profits" (array of up to {MAX_TAKE_PROFITS} numbers, ordered TP1..TP3)',
+                '"direction" (one of "buy","sell")',
+                '"confidence" (number 0..1 — how sure you are)',
+                '"entry" (number)',
+                '"stop_loss" (number)',
+                f'"take_profits" (array of 1..{MAX_TAKE_PROFITS} numbers, ordered TP1..TP3)',
                 '"rationale" (short string)',
             ]
         )
         contract = (
             "## Output contract\n"
             "Respond with a STRICT JSON object and nothing else (no markdown, no "
-            f"prose). Required keys: {keys}. "
-            'For a "buy" or "sell", provide entry, stop_loss and at least one '
-            "take_profit consistent with the direction (for a buy: "
-            "stop_loss < entry < take_profits; for a sell: the reverse). "
-            'For "neutral", prices may be null.'
+            'prose). The object MUST have exactly two keys: "scalp" and "swing", '
+            "each a signal object with these keys: "
+            f"{signal_keys}. "
+            'BOTH signals are mandatory and BOTH must be directional ("buy" or '
+            '"sell") — never "neutral", never null prices. Express any lack of '
+            "conviction through a LOW confidence value, not by refusing to trade. "
+            "Levels must be internally consistent with the direction (for a buy: "
+            "stop_loss < entry < TP1 < TP2 < TP3; for a sell: the reverse). The "
+            '"scalp" is a short-term idea framed on the lower timeframes (tighter '
+            'stop, nearer targets); the "swing" is a higher-timeframe idea (wider '
+            "stop, extended targets). They may differ in direction."
         )
         return f"{_load_system_persona()}\n\n{contract}"
 
@@ -253,21 +296,52 @@ class BaseAIProvider(AIProvider):
         for view in views:
             ind = view.indicators.model_dump(mode="json")
             candles = self._render_candles(view.recent_candles)
-            primary = " — PRIMARY / decision timeframe" if (
-                view.timeframe == context.primary_timeframe
-            ) else ""
+            primary = (
+                " — PRIMARY / decision timeframe"
+                if (view.timeframe == context.primary_timeframe)
+                else ""
+            )
             blocks.append(
                 f"=== Timeframe: {view.timeframe}{primary} ===\n"
                 f"Indicators (latest):\n{json.dumps(ind, indent=2, default=str)}\n\n"
                 f"Recent candles (oldest first, up to {_PROMPT_CANDLE_WINDOW}):\n{candles}"
             )
         order = ", ".join(v.timeframe for v in views)
+        prior = self._render_prior_signals(context)
         return (
             f"Instrument: {context.symbol}\n"
             f"Primary (decision) timeframe: {context.primary_timeframe}\n"
             f"Timeframes provided (high → low): {order}\n\n"
             + "\n\n".join(blocks)
-            + "\n\nPerform a top-down multi-timeframe analysis and return the JSON signal now."
+            + f"\n\n{prior}"
+            + "\n\nPerform a top-down multi-timeframe analysis and return the JSON "
+            "object with both a scalp and a swing signal now."
+        )
+
+    @staticmethod
+    def _render_prior_signals(context: AnalysisContext) -> str:
+        """Render the pair's currently-open signals so the model can keep/adjust.
+
+        Without a prior signal of a given style, says so explicitly — the model
+        should then open a fresh idea rather than assume continuity.
+        """
+
+        def one(label: str, prior: PriorSignal | None) -> str:
+            if prior is None:
+                return f"- {label}: none open yet — open a fresh idea."
+            tps = ", ".join(str(tp) for tp in prior.take_profits) or "(none)"
+            return (
+                f"- {label}: {prior.direction} | confidence {prior.confidence:.2f} | "
+                f"entry {prior.entry} | stop {prior.stop_loss} | TPs {tps} | "
+                f"as of {prior.generated_at}"
+            )
+
+        return (
+            "Current open signals (KEEP them if the fresh data still supports the "
+            "idea; otherwise ADJUST levels/direction/confidence and say what "
+            "changed in the rationale):\n"
+            f"{one('SCALP', context.current_scalp)}\n"
+            f"{one('SWING', context.current_swing)}"
         )
 
     @staticmethod
@@ -280,10 +354,10 @@ class BaseAIProvider(AIProvider):
 
     # ── Response parsing ─────────────────────────────────────────────────
 
-    def _parse_response(self, raw: str) -> SignalDraft:
+    def _parse_response(self, raw: str) -> DualSignalDraft:
         payload = self._extract_json(raw)
         try:
-            return SignalDraft.model_validate(payload)
+            return DualSignalDraft.model_validate(payload)
         except ValidationError as exc:
             raise AIResponseError(f"Signal JSON failed validation: {exc}") from exc
 
@@ -319,12 +393,20 @@ class BaseAIProvider(AIProvider):
         return parsed
 
     @staticmethod
-    def _assert_actionable(draft: SignalDraft) -> None:
-        """A directional call without an entry isn't tradeable.
+    def _assert_actionable(draft: SignalDraft, *, style: str) -> None:
+        """Every emitted signal must be a directional, tradeable call.
 
         Enforced here (not in the model) because it's a *semantic* rule about
-        signals, distinct from the field-shape validation the model owns —
-        and it keeps ``SignalDraft`` reusable for non-directional contexts.
+        signals, distinct from the field-shape validation the model owns — and it
+        keeps ``SignalDraft`` reusable for other contexts. The product now
+        requires an always-on directional signal per style: a ``neutral`` or
+        entry-less reply is rejected (it fails just this pair for this run, via
+        the controller's per-pair containment) rather than silently producing
+        nothing.
         """
-        if draft.direction in ("buy", "sell") and draft.entry is None:
-            raise AIResponseError(f"{draft.direction!r} signal is missing an entry price")
+        if draft.direction not in ("buy", "sell"):
+            raise AIResponseError(
+                f"{style} signal must be directional (buy/sell), got {draft.direction!r}"
+            )
+        if draft.entry is None:
+            raise AIResponseError(f"{style} {draft.direction!r} signal is missing an entry price")

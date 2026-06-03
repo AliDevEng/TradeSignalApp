@@ -23,7 +23,7 @@ from app.models.analysis_run import (
 )
 from app.models.base import Base, TimestampMixin
 from app.models.pair import Pair
-from app.models.signal import Signal, SignalDirection
+from app.models.signal import Signal, SignalDirection, SignalType
 
 __all__ = [
     "AnalysisRun",
@@ -33,5 +33,6 @@ __all__ = [
     "Pair",
     "Signal",
     "SignalDirection",
+    "SignalType",
     "TimestampMixin",
 ]

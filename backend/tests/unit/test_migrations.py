@@ -190,6 +190,31 @@ def test_offline_upgrade_includes_unique_one_signal_per_run_per_pair(
     assert "one_signal_per_run_per_pair" in initial_migration_sql
 
 
+# ── 0003: signal_type (scalp/swing) ────────────────────────────────────────
+
+
+def test_offline_upgrade_creates_signal_type_enum_before_use(initial_migration_sql: str):
+    """The signal_type enum must be CREATE TYPE'd before the column references it."""
+    sql = initial_migration_sql
+    enum_pos = sql.find("CREATE TYPE signal_type")
+    column_pos = sql.find("ADD COLUMN signal_type")
+    assert enum_pos != -1, "signal_type enum must be created"
+    assert column_pos != -1, "signal_type column must be added"
+    assert enum_pos < column_pos
+
+
+def test_offline_upgrade_widens_unique_constraint_to_include_style(initial_migration_sql: str):
+    """0003 swaps the per-run/pair unique key for one that includes the style."""
+    sql = initial_migration_sql
+    assert "one_signal_per_run_per_pair_style" in sql
+    # The old 2-column constraint is dropped and replaced.
+    assert re.search(r"DROP CONSTRAINT\s+one_signal_per_run_per_pair\b", sql, re.IGNORECASE)
+
+
+def test_offline_upgrade_adds_signal_type_index(initial_migration_sql: str):
+    assert "ix_signals_pair_id_signal_type_generated_at" in initial_migration_sql
+
+
 # ── env.py wiring ──────────────────────────────────────────────────────────
 
 

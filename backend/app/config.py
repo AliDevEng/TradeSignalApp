@@ -54,7 +54,10 @@ class Settings(BaseSettings):
     # Low temperature: signal generation should be near-deterministic. A high
     # temperature makes back-tests irreproducible and confidence scores noisy.
     ai_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    ai_max_tokens: int = Field(default=1024, ge=256, le=8192)
+    # Each analysis returns *two* signals (scalp + swing), each with a level
+    # ladder and a rationale, so the budget is wider than a single-signal reply
+    # needs — a truncated reply is an unparseable reply.
+    ai_max_tokens: int = Field(default=2048, ge=256, le=8192)
     # Per-request budget. A hung provider must never stall an analysis cycle
     # past this; the cycle records the failure and moves on.
     ai_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
@@ -83,6 +86,14 @@ class Settings(BaseSettings):
         default_factory=lambda: ["5m", "15m", "1h", "4h", "1d"]
     )
 
+    # ── Signal lifetime ────────────────────────────────────────────────────
+    # How long each style's signal stays "fresh" before ``expires_at`` lapses.
+    # A scalp ages out in hours; a swing lives for days. These drive the
+    # frontend freshness badge and the retention sweep, and are bounded so a
+    # typo can't create an effectively-immortal or instantly-stale signal.
+    signal_scalp_ttl_minutes: int = Field(default=240, ge=1, le=10080)  # 4h .. 7d cap
+    signal_swing_ttl_minutes: int = Field(default=4320, ge=1, le=43200)  # 3d .. 30d cap
+
     # ── Scheduler ──────────────────────────────────────────────────────────
     # Disable on API-only replicas so the analysis job runs on exactly one
     # instance in a horizontally-scaled deployment (running it everywhere
@@ -100,9 +111,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["XAUUSD", "GBPUSD", "EURUSD"]
     )
 
-    @field_validator(
-        "active_pairs", "cors_allowed_origins", "analysis_timeframes", mode="before"
-    )
+    @field_validator("active_pairs", "cors_allowed_origins", "analysis_timeframes", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):

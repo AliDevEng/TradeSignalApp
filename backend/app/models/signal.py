@@ -59,6 +59,19 @@ class SignalDirection(enum.StrEnum):
     NEUTRAL = "neutral"
 
 
+class SignalType(enum.StrEnum):
+    """Trade horizon a signal is framed on.
+
+    A single analysis run emits one signal of *each* type per pair: a short-term
+    ``SCALP`` (framed on the lower timeframes, tight stop, near targets) and a
+    higher-timeframe ``SWING`` (wider stop, extended targets). The two are
+    distinct rows so each carries its own direction, levels and confidence.
+    """
+
+    SCALP = "scalp"
+    SWING = "swing"
+
+
 class Signal(Base, TimestampMixin):
     __tablename__ = "signals"
     __table_args__ = (
@@ -86,18 +99,27 @@ class Signal(Base, TimestampMixin):
             "take_profit_3 IS NULL OR take_profit_3 > 0",
             name="take_profit_3_positive_when_set",
         ),
-        # A single run produces at most one signal per pair. NULLs in
-        # `analysis_run_id` (manual signals, or runs that have since
-        # been deleted) are treated as distinct by Postgres, so this
-        # does not block ad-hoc inserts.
+        # A single run produces at most one signal per pair *per style*
+        # (one scalp + one swing). NULLs in `analysis_run_id` (manual
+        # signals, or runs that have since been deleted) are treated as
+        # distinct by Postgres, so this does not block ad-hoc inserts.
         UniqueConstraint(
             "pair_id",
             "analysis_run_id",
-            name="one_signal_per_run_per_pair",
+            "signal_type",
+            name="one_signal_per_run_per_pair_style",
         ),
         # Most-common access pattern: "latest signals for pair X" — the
         # composite index supports the equality + range scan in one go.
         Index("ix_signals_pair_id_generated_at", "pair_id", "generated_at"),
+        # Serves "current signal for pair X of style Y" — the latest-per-style
+        # read the controller and read API perform every run.
+        Index(
+            "ix_signals_pair_id_signal_type_generated_at",
+            "pair_id",
+            "signal_type",
+            "generated_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -130,6 +152,15 @@ class Signal(Base, TimestampMixin):
             native_enum=True,
             # Persist the StrEnum values ("buy"), not the member names ("BUY"),
             # to match the lowercase Postgres enum created by the migration.
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+    )
+    signal_type: Mapped[SignalType] = mapped_column(
+        SAEnum(
+            SignalType,
+            name="signal_type",
+            native_enum=True,
             values_callable=lambda enum_cls: [member.value for member in enum_cls],
         ),
         nullable=False,

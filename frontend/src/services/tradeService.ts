@@ -1,12 +1,19 @@
 import { apiClient } from "@/services/api";
 import type { ApiSuccessResponse, PaginatedResponse } from "@/types/api";
-import type { ApiAnalysisRun, ApiAnalysisRunStatus, ApiPair, ApiSignal } from "@/types/tradeApi";
+import type {
+  ApiAnalysisRun,
+  ApiAnalysisRunStatus,
+  ApiPair,
+  ApiSignal,
+  ApiSignalType
+} from "@/types/tradeApi";
 
 export type SignalListParams = {
   page?: number;
   perPage?: number;
   pair?: string;
   runId?: string;
+  signalType?: ApiSignalType;
 };
 
 export type AnalysisRunListParams = {
@@ -31,7 +38,8 @@ export async function getSignals(params: SignalListParams = {}): Promise<Paginat
       page: params.page,
       per_page: params.perPage,
       pair: params.pair,
-      run_id: params.runId
+      run_id: params.runId,
+      signal_type: params.signalType
     }
   });
 
@@ -43,9 +51,13 @@ export async function getSignal(signalId: string): Promise<ApiSignal> {
   return response.data.data;
 }
 
-export async function getPairSignals(symbol: string, limit = 20): Promise<ApiSignal[]> {
+export async function getPairSignals(
+  symbol: string,
+  limit = 20,
+  signalType?: ApiSignalType
+): Promise<ApiSignal[]> {
   const response = await apiClient.get<ApiSuccessResponse<ApiSignal[]>>(`/pairs/${symbol}/signals`, {
-    params: { limit }
+    params: { limit, signal_type: signalType }
   });
 
   return response.data.data;

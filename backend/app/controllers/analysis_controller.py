@@ -53,7 +53,7 @@ import logging
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Final
 
@@ -70,9 +70,17 @@ from app.models import (
     AnalysisRunTrigger,
     Signal,
     SignalDirection,
+    SignalType,
 )
 from app.services import ServiceError
-from app.services.ai import AIProvider, AnalysisContext, SignalDraft, TimeframeView
+from app.services.ai import (
+    AIProvider,
+    AnalysisContext,
+    DualSignalDraft,
+    PriorSignal,
+    SignalDraft,
+    TimeframeView,
+)
 from app.services.indicators import IndicatorCalculator
 from app.services.market_data import MarketDataProvider
 
@@ -83,36 +91,77 @@ logger = logging.getLogger(__name__)
 # stack-trace-adjacent text; a bounded summary keeps the ledger row scannable.
 _MAX_ERROR_SUMMARY: Final[int] = 1000
 
+# Relative magnitude of each timeframe, used to pick the lowest (scalp) and
+# highest (swing) configured timeframe to frame each style's signal on.
+_TIMEFRAME_MINUTES: Final[dict[str, int]] = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+}
+
 
 def _utcnow() -> datetime:
     """Timezone-aware UTC now. Injected via the constructor so tests can pin it."""
     return datetime.now(UTC)
 
 
+def _to_prior(signal: Signal | None) -> PriorSignal | None:
+    """Project a persisted ``Signal`` into the compact :class:`PriorSignal` the
+    AI is shown, or ``None`` when the pair has no open signal of that style.
+
+    Reads only already-loaded scalar columns, so it is safe against a row whose
+    session has since closed (no lazy-load risk).
+    """
+    if signal is None:
+        return None
+    take_profits = tuple(
+        tp
+        for tp in (signal.take_profit, signal.take_profit_2, signal.take_profit_3)
+        if tp is not None
+    )
+    return PriorSignal(
+        direction=signal.direction.value,
+        confidence=signal.confidence,
+        entry=signal.entry_price,
+        stop_loss=signal.stop_loss,
+        take_profits=take_profits,
+        generated_at=signal.generated_at.isoformat(),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _PairTarget:
     """The minimal, detached projection of a ``Pair`` the run needs.
 
-    Only the primary key and symbol are carried forward out of the opening
-    transaction, so nothing downstream touches a detached ORM instance (which
-    would risk an implicit lazy-load against a closed session).
+    Only the primary key, symbol, and the pair's currently-open signals (one per
+    style, fed back so the model can keep or adjust them) are carried forward out
+    of the opening transaction, so nothing downstream touches a detached ORM
+    instance (which would risk an implicit lazy-load against a closed session).
     """
 
     id: int
     symbol: str
+    current_scalp: PriorSignal | None = None
+    current_swing: PriorSignal | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class _PairOutcome:
-    """Result of analysing a single pair — success (draft + indicators) or failure.
+    """Result of analysing a single pair — success (dual draft + indicators) or failure.
 
     ``indicators`` is the multi-timeframe snapshot keyed by timeframe
-    (``{"1h": {...}, "4h": {...}}``), persisted verbatim onto the signal so it
-    stays explainable against the exact inputs that produced it.
+    (``{"1h": {...}, "4h": {...}}``), persisted verbatim onto each signal so it
+    stays explainable against the exact inputs that produced it. A successful
+    outcome always carries a :class:`DualSignalDraft` — a scalp *and* a swing —
+    so it always yields two signal rows.
     """
 
     target: _PairTarget
-    draft: SignalDraft | None = None
+    dual: DualSignalDraft | None = None
     indicators: dict[str, object] | None = None
     error: str | None = None
 
@@ -121,20 +170,14 @@ class _PairOutcome:
         return self.error is not None
 
     @property
-    def emits_signal(self) -> bool:
-        """A signal row is written only for an actionable, directional draft.
+    def emits_signals(self) -> bool:
+        """Whether this outcome contributes signal rows (one scalp + one swing).
 
-        ``neutral`` drafts (and, defensively, any directional draft the AI left
-        without an entry — though :class:`BaseAIProvider` already rejects those)
-        are *not* persisted: the ``signals`` table models actionable trades and
-        enforces ``entry_price NOT NULL``. A "no trade this cycle" outcome is a
-        successful analysis that simply produces no signal, not a failure.
+        True for every non-failed outcome: the AI provider guarantees both drafts
+        are directional with an entry (it raises otherwise, which lands here as a
+        failed outcome), so a successful analysis always persists two signals.
         """
-        return (
-            self.draft is not None
-            and self.draft.direction in ("buy", "sell")
-            and self.draft.entry is not None
-        )
+        return not self.failed and self.dual is not None and self.indicators is not None
 
 
 class AnalysisController:
@@ -174,6 +217,18 @@ class AnalysisController:
         self._timeframe = settings.analysis_timeframe
         self._timeframes = list(settings.analysis_timeframes)
         self._candle_count = settings.analysis_candle_count
+
+        # A scalp is framed on the lowest configured timeframe, a swing on the
+        # highest — the two horizons the dual signal represents. Computed once
+        # from the same ordered set the AI is shown.
+        ordered = sorted(self._timeframes, key=lambda tf: _TIMEFRAME_MINUTES.get(tf, 0))
+        self._scalp_timeframe = ordered[0]
+        self._swing_timeframe = ordered[-1]
+
+        # Per-style signal lifetime — stamped onto ``expires_at`` so the
+        # freshness badge and retention sweep have something to act on.
+        self._scalp_ttl = timedelta(minutes=settings.signal_scalp_ttl_minutes)
+        self._swing_ttl = timedelta(minutes=settings.signal_swing_ttl_minutes)
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -239,7 +294,8 @@ class AnalysisController:
             await self._try_mark_failed(run_id, "result persistence failed")
             raise
 
-        signals_generated = sum(1 for o in outcomes if o.emits_signal)
+        # Two signals (scalp + swing) per non-failed pair.
+        signals_generated = sum(len(SignalType) for o in outcomes if o.emits_signals)
         logger.info(
             "Analysis run %s finished: status=%s processed=%d failed=%d signals=%d",
             run.id,
@@ -267,8 +323,22 @@ class AnalysisController:
         async with self._database.session() as session:
             pairs = PairRepository(session)
             runs = AnalysisRunRepository(session)
+            signal_repo = SignalRepository(session)
 
-            targets = [_PairTarget(id=p.id, symbol=p.symbol) for p in await pairs.list_active()]
+            # Snapshot each pair's currently-open signals (one per style) in this
+            # same opening transaction — before any network IO — so the model can
+            # keep or adjust them. ``current_for_pair`` reads the latest per style.
+            targets: list[_PairTarget] = []
+            for p in await pairs.list_active():
+                current = await signal_repo.current_for_pair(p.id)
+                targets.append(
+                    _PairTarget(
+                        id=p.id,
+                        symbol=p.symbol,
+                        current_scalp=_to_prior(current[SignalType.SCALP]),
+                        current_swing=_to_prior(current[SignalType.SWING]),
+                    )
+                )
 
             run = AnalysisRun(
                 status=AnalysisRunStatus.RUNNING,
@@ -325,8 +395,10 @@ class AnalysisController:
                 symbol=target.symbol,
                 primary_timeframe=self._timeframe,
                 views=tuple(views),
+                current_scalp=target.current_scalp,
+                current_swing=target.current_swing,
             )
-            draft = await self._ai.analyze(context)
+            dual = await self._ai.analyze(context)
         except ServiceError as exc:
             logger.warning("Pair %s failed analysis: %s", target.symbol, exc)
             return _PairOutcome(target=target, error=f"{type(exc).__name__}: {exc}")
@@ -334,7 +406,7 @@ class AnalysisController:
             logger.exception("Pair %s raised an unexpected error during analysis", target.symbol)
             return _PairOutcome(target=target, error=f"{type(exc).__name__}: {exc}")
 
-        return _PairOutcome(target=target, draft=draft, indicators=indicators)
+        return _PairOutcome(target=target, dual=dual, indicators=indicators)
 
     # ── Phase 3: persist signals + finalise the ledger (one transaction) ─────
 
@@ -350,9 +422,10 @@ class AnalysisController:
         """
         generated_at = self._clock()
         signals = [
-            self._build_signal(outcome, run_id=run_id, generated_at=generated_at)
+            signal
             for outcome in outcomes
-            if outcome.emits_signal
+            if outcome.emits_signals
+            for signal in self._build_signals(outcome, run_id=run_id, generated_at=generated_at)
         ]
 
         processed = sum(1 for o in outcomes if not o.failed)
@@ -379,17 +452,61 @@ class AnalysisController:
 
         return run
 
-    def _build_signal(
+    def _build_signals(
         self,
         outcome: _PairOutcome,
         *,
         run_id: uuid.UUID,
         generated_at: datetime,
-    ) -> Signal:
-        """Map a directional :class:`SignalDraft` onto the ``Signal`` ORM model.
+    ) -> list[Signal]:
+        """Map an outcome's :class:`DualSignalDraft` onto two ``Signal`` rows.
 
-        ``emits_signal`` has already guaranteed a directional draft with an entry,
-        so the asserts below are invariants, not user-facing validation.
+        One row per style (scalp + swing). ``emits_signals`` has already
+        guaranteed both drafts are directional with an entry, so the asserts
+        below are invariants, not user-facing validation. Each style gets the
+        timeframe it is framed on and a style-specific ``expires_at``.
+        """
+        dual = outcome.dual
+        indicators = outcome.indicators
+        assert dual is not None  # invariant from emits_signals
+        assert indicators is not None  # set on every successful outcome
+
+        return [
+            self._build_one_signal(
+                outcome.target.id,
+                dual.scalp,
+                signal_type=SignalType.SCALP,
+                timeframe=self._scalp_timeframe,
+                expires_at=generated_at + self._scalp_ttl,
+                run_id=run_id,
+                generated_at=generated_at,
+                indicators=indicators,
+            ),
+            self._build_one_signal(
+                outcome.target.id,
+                dual.swing,
+                signal_type=SignalType.SWING,
+                timeframe=self._swing_timeframe,
+                expires_at=generated_at + self._swing_ttl,
+                run_id=run_id,
+                generated_at=generated_at,
+                indicators=indicators,
+            ),
+        ]
+
+    def _build_one_signal(
+        self,
+        pair_id: int,
+        draft: SignalDraft,
+        *,
+        signal_type: SignalType,
+        timeframe: str,
+        expires_at: datetime,
+        run_id: uuid.UUID,
+        generated_at: datetime,
+        indicators: dict[str, object],
+    ) -> Signal:
+        """Map one directional :class:`SignalDraft` onto a ``Signal`` ORM row.
 
         Note on take-profits: a ``SignalDraft`` carries up to three ordered
         levels (TP1..TP3). The ``signals`` schema stores the full ladder across
@@ -397,10 +514,7 @@ class AnalysisController:
         (TP3); we map each level positionally and leave the columns NULL for any
         level the draft did not emit.
         """
-        draft = outcome.draft
-        indicators = outcome.indicators
-        assert draft is not None and draft.entry is not None  # invariant from emits_signal
-        assert indicators is not None  # set on every successful outcome
+        assert draft.entry is not None  # invariant from emits_signals
 
         tps = draft.take_profits
         take_profit: Decimal | None = tps[0] if len(tps) > 0 else None
@@ -408,23 +522,21 @@ class AnalysisController:
         take_profit_3: Decimal | None = tps[2] if len(tps) > 2 else None
 
         return Signal(
-            pair_id=outcome.target.id,
+            pair_id=pair_id,
             analysis_run_id=run_id,
             direction=SignalDirection(draft.direction),
+            signal_type=signal_type,
             confidence=draft.confidence,
             entry_price=draft.entry,
             stop_loss=draft.stop_loss,
             take_profit=take_profit,
             take_profit_2=take_profit_2,
             take_profit_3=take_profit_3,
-            timeframe=self._timeframe,
+            timeframe=timeframe,
             rationale=draft.rationale,
             indicators_snapshot=indicators,
             generated_at=generated_at,
-            # No expiry policy is defined yet; leaving this NULL means the
-            # retention sweep (``SignalRepository.delete_expired``) simply skips
-            # these rows rather than us inventing a lifetime here.
-            expires_at=None,
+            expires_at=expires_at,
             ai_provider=self._ai.provider_name,
             ai_model=self._ai.model,
         )

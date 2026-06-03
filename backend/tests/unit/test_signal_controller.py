@@ -125,7 +125,19 @@ async def test_list_latest_for_pair_returns_mapped_signals():
 
     assert len(result) == 2
     assert all(r.pair_symbol == "XAUUSD" for r in result)
-    signals.latest_for_pair.assert_awaited_once_with(3, limit=5)
+    signals.latest_for_pair.assert_awaited_once_with(3, limit=5, signal_type=None)
+
+
+async def test_list_signals_passes_style_filter_through():
+    from app.models import SignalType
+
+    ctrl, signals, _ = _controller()
+    signals.count_filtered.return_value = 0
+
+    await ctrl.list_signals(offset=0, limit=20, signal_type="scalp")
+
+    # The wire literal is cast to the ORM enum at the controller boundary.
+    assert signals.count_filtered.await_args.kwargs["signal_type"] == SignalType.SCALP
 
 
 async def test_list_latest_for_pair_unknown_symbol_raises_not_found():

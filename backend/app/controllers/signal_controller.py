@@ -31,7 +31,7 @@ import uuid
 from app.controllers.exceptions import ResourceNotFoundError
 from app.controllers.results import Page
 from app.database.repository import PairRepository, SignalRepository
-from app.models import Signal
+from app.models import Signal, SignalType
 from app.schemas.signal import SignalResponse
 
 
@@ -51,21 +51,26 @@ class SignalController:
         limit: int,
         pair_symbol: str | None = None,
         analysis_run_id: uuid.UUID | None = None,
+        signal_type: str | None = None,
     ) -> Page[SignalResponse]:
-        """A page of signals, newest first, optionally filtered by pair and run.
+        """A page of signals, newest first, optionally filtered by pair, run, style.
 
         ``offset``/``limit`` are passed through from the view's pagination
         dependency; the view reassembles page/per_page into the response meta.
-        Filtering by a ``pair_symbol`` that doesn't exist raises
+        ``signal_type`` arrives as the validated wire literal and is converted to
+        the ORM enum here, at the boundary, so the view never imports the model
+        enum. Filtering by a ``pair_symbol`` that doesn't exist raises
         :class:`ResourceNotFoundError` rather than silently returning an empty
         page — a filter that names a concrete resource should fail honestly if
         that resource is unknown.
         """
         pair_id = await self._resolve_pair_id(pair_symbol)
+        style = SignalType(signal_type) if signal_type is not None else None
 
         total = await self._signals.count_filtered(
             pair_id=pair_id,
             analysis_run_id=analysis_run_id,
+            signal_type=style,
         )
         # Short-circuit the row fetch when the count is zero: nothing to load,
         # and it keeps an empty page from issuing a guaranteed-empty SELECT.
@@ -77,6 +82,7 @@ class SignalController:
             limit=limit,
             pair_id=pair_id,
             analysis_run_id=analysis_run_id,
+            signal_type=style,
             eager_load_pair=True,
         )
         return Page(items=[self._to_response(row) for row in rows], total=total)
@@ -88,8 +94,14 @@ class SignalController:
             raise ResourceNotFoundError("signal", signal_id)
         return self._to_response(signal)
 
-    async def list_latest_for_pair(self, symbol: str, *, limit: int = 10) -> list[SignalResponse]:
-        """The most-recent signals for one pair, newest first.
+    async def list_latest_for_pair(
+        self,
+        symbol: str,
+        *,
+        limit: int = 10,
+        signal_type: str | None = None,
+    ) -> list[SignalResponse]:
+        """The most-recent signals for one pair, newest first, optionally by style.
 
         Backs the pair-detail view. The pair is resolved first (and its symbol
         reused for the response), so an unknown symbol fails fast as a 404
@@ -98,7 +110,8 @@ class SignalController:
         pair = await self._pairs.get_by_symbol(symbol)
         if pair is None:
             raise ResourceNotFoundError("pair", symbol)
-        rows = await self._signals.latest_for_pair(pair.id, limit=limit)
+        style = SignalType(signal_type) if signal_type is not None else None
+        rows = await self._signals.latest_for_pair(pair.id, limit=limit, signal_type=style)
         return [self._to_response(row, pair_symbol=pair.symbol) for row in rows]
 
     async def list_for_run(self, analysis_run_id: uuid.UUID) -> list[SignalResponse]:
@@ -133,6 +146,7 @@ class SignalController:
             pair_symbol=symbol,
             analysis_run_id=signal.analysis_run_id,
             direction=signal.direction.value,
+            signal_type=signal.signal_type.value,
             confidence=signal.confidence,
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,

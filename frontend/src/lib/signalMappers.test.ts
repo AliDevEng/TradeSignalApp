@@ -20,6 +20,7 @@ function buildApiSignal(overrides: Partial<ApiSignal> = {}): ApiSignal {
     pair_symbol: "XAUUSD",
     analysis_run_id: "run-1",
     direction: "buy",
+    signal_type: "swing",
     confidence: 0.84,
     entry_price: "2368.42",
     stop_loss: "2354.80",
@@ -120,5 +121,10 @@ describe("mapApiSignal", () => {
 
     expect(signal.aiProvider).toBe("groq");
     expect(signal.aiModel).toBe("llama-3.3-70b-versatile");
+  });
+
+  it("maps the trade style through", () => {
+    expect(mapApiSignal(buildApiSignal({ signal_type: "scalp" }), [pair]).tradeStyle).toBe("scalp");
+    expect(mapApiSignal(buildApiSignal({ signal_type: "swing" }), [pair]).tradeStyle).toBe("swing");
   });
 });

@@ -25,7 +25,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 
 from app.database.repository.base import BaseRepository
-from app.models import Signal
+from app.models import Signal, SignalType
 
 
 class SignalRepository(BaseRepository[Signal]):
@@ -36,23 +36,36 @@ class SignalRepository(BaseRepository[Signal]):
         pair_id: int,
         *,
         limit: int = 10,
+        signal_type: SignalType | None = None,
     ) -> Sequence[Signal]:
         """The N most-recent signals for a pair, newest first.
 
-        Hits the ``ix_signals_pair_id_generated_at`` composite index in
-        a single backwards scan — no sort required at the planner
-        level for typical PG configurations.
+        Optionally scoped to a single style. Hits the
+        ``ix_signals_pair_id_signal_type_generated_at`` composite index (or the
+        ``(pair_id, generated_at)`` one when unscoped) in a single backwards
+        scan — no sort required at the planner level for typical PG configs.
         """
         if limit <= 0:
             raise ValueError("limit must be a positive integer")
-        stmt = (
-            select(Signal)
-            .where(Signal.pair_id == pair_id)
-            .order_by(desc(Signal.generated_at))
-            .limit(limit)
-        )
+        stmt = select(Signal).where(Signal.pair_id == pair_id)
+        if signal_type is not None:
+            stmt = stmt.where(Signal.signal_type == signal_type)
+        stmt = stmt.order_by(desc(Signal.generated_at)).limit(limit)
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def current_for_pair(self, pair_id: int) -> dict[SignalType, Signal | None]:
+        """The pair's currently-open signal of each style (latest per style).
+
+        Used both to feed the AI's keep-or-adjust loop and to render the "current
+        scalp + swing" view. Returns every style as a key so callers can rely on
+        the shape without a membership check; an absent style maps to ``None``.
+        """
+        current: dict[SignalType, Signal | None] = dict.fromkeys(SignalType)
+        for style in SignalType:
+            rows = await self.latest_for_pair(pair_id, limit=1, signal_type=style)
+            current[style] = rows[0] if rows else None
+        return current
 
     async def list_paginated(
         self,
@@ -61,6 +74,7 @@ class SignalRepository(BaseRepository[Signal]):
         limit: int,
         pair_id: int | None = None,
         analysis_run_id: uuid.UUID | None = None,
+        signal_type: SignalType | None = None,
         eager_load_pair: bool = False,
     ) -> Sequence[Signal]:
         """Generic signal list with optional filters and IN-loaded pair.
@@ -75,6 +89,8 @@ class SignalRepository(BaseRepository[Signal]):
             stmt = stmt.where(Signal.pair_id == pair_id)
         if analysis_run_id is not None:
             stmt = stmt.where(Signal.analysis_run_id == analysis_run_id)
+        if signal_type is not None:
+            stmt = stmt.where(Signal.signal_type == signal_type)
         if eager_load_pair:
             stmt = stmt.options(selectinload(Signal.pair))
         stmt = stmt.order_by(desc(Signal.generated_at)).offset(offset).limit(limit)
@@ -86,6 +102,7 @@ class SignalRepository(BaseRepository[Signal]):
         *,
         pair_id: int | None = None,
         analysis_run_id: uuid.UUID | None = None,
+        signal_type: SignalType | None = None,
     ) -> int:
         """Row count matching the same filters as :meth:`list_paginated`.
 
@@ -97,6 +114,8 @@ class SignalRepository(BaseRepository[Signal]):
             stmt = stmt.where(Signal.pair_id == pair_id)
         if analysis_run_id is not None:
             stmt = stmt.where(Signal.analysis_run_id == analysis_run_id)
+        if signal_type is not None:
+            stmt = stmt.where(Signal.signal_type == signal_type)
         result = await self._session.execute(stmt)
         return int(result.scalar_one())
 

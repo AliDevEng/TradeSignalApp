@@ -39,4 +39,9 @@ describe("SignalCard", () => {
     render(<SignalCard density="comfortable" signal={buildSignal({ riskReward: null })} />);
     expect(screen.getByText("Hold")).toBeInTheDocument();
   });
+
+  it("renders the trade-style badge", () => {
+    render(<SignalCard density="comfortable" signal={buildSignal({ tradeStyle: "scalp" })} />);
+    expect(screen.getByText("Scalp")).toBeInTheDocument();
+  });
 });

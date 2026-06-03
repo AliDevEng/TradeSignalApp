@@ -2,25 +2,28 @@ import type { Signal } from "@/types/signal";
 import type {
   SignalDirectionFilter,
   SignalSort,
-  SignalStatusFilter
+  SignalStatusFilter,
+  SignalTradeStyleFilter
 } from "@/store/signalStore";
 
 export type SignalRefinement = {
   direction: SignalDirectionFilter;
+  tradeStyle: SignalTradeStyleFilter;
   status: SignalStatusFilter;
   /** "all" or a pair symbol. Applied client-side as a refinement. */
   pair: string;
   sort: SignalSort;
 };
 
-/** Client-side direction/status/pair refinement over an already-fetched set. */
+/** Client-side direction/style/status/pair refinement over an already-fetched set. */
 export function filterSignals(signals: Signal[], refinement: SignalRefinement): Signal[] {
   return signals.filter((signal) => {
     const matchesDirection = refinement.direction === "all" || signal.direction === refinement.direction;
+    const matchesStyle = refinement.tradeStyle === "all" || signal.tradeStyle === refinement.tradeStyle;
     const matchesStatus = refinement.status === "all" || signal.status === refinement.status;
     const matchesPair = refinement.pair === "all" || signal.symbol === refinement.pair;
 
-    return matchesDirection && matchesStatus && matchesPair;
+    return matchesDirection && matchesStyle && matchesStatus && matchesPair;
   });
 }
 

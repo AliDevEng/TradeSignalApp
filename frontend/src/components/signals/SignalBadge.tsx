@@ -1,7 +1,7 @@
-import { ArrowDownRight, ArrowRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Timer, Waypoints } from "lucide-react";
 
 import { Badge } from "@/components/ui/Badge";
-import type { SignalDirection, SignalStatus } from "@/types/signal";
+import type { SignalDirection, SignalStatus, SignalTradeStyle } from "@/types/signal";
 
 type SignalBadgeProps = {
   direction: SignalDirection;
@@ -9,6 +9,10 @@ type SignalBadgeProps = {
 
 type SignalStatusBadgeProps = {
   status: SignalStatus;
+};
+
+type TradeStyleBadgeProps = {
+  tradeStyle: SignalTradeStyle;
 };
 
 const directionConfig = {
@@ -44,6 +48,19 @@ const statusConfig = {
   }
 } as const;
 
+const tradeStyleConfig = {
+  scalp: {
+    label: "Scalp",
+    icon: Timer,
+    tone: "info"
+  },
+  swing: {
+    label: "Swing",
+    icon: Waypoints,
+    tone: "neutral"
+  }
+} as const;
+
 export function SignalBadge({ direction }: SignalBadgeProps) {
   const config = directionConfig[direction];
   const Icon = config.icon;
@@ -60,4 +77,16 @@ export function SignalStatusBadge({ status }: SignalStatusBadgeProps) {
   const config = statusConfig[status];
 
   return <Badge tone={config.tone}>{config.label}</Badge>;
+}
+
+export function TradeStyleBadge({ tradeStyle }: TradeStyleBadgeProps) {
+  const config = tradeStyleConfig[tradeStyle];
+  const Icon = config.icon;
+
+  return (
+    <Badge tone={config.tone}>
+      <Icon className="mr-1.5 h-3.5 w-3.5" />
+      {config.label}
+    </Badge>
+  );
 }

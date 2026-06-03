@@ -6,6 +6,7 @@ import type { SignalRefinement } from "@/lib/signalFilters";
 
 const base: SignalRefinement = {
   direction: "all",
+  tradeStyle: "all",
   status: "all",
   pair: "all",
   sort: "confidence"
@@ -26,6 +27,12 @@ describe("filterSignals", () => {
   it("filters by pair symbol", () => {
     const result = filterSignals(signals, { ...base, pair: "EURUSD" });
     expect(result.every((signal) => signal.symbol === "EURUSD")).toBe(true);
+  });
+
+  it("filters by trade style", () => {
+    const result = filterSignals(signals, { ...base, tradeStyle: "scalp" });
+    expect(result.every((signal) => signal.tradeStyle === "scalp")).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
   });
 });
 
