@@ -1,566 +1,581 @@
-# TradeSignal AI — Projektbeskrivning
+# TradeSignal AI — Project Description
 
-> En AI-driven handelsanalysplattform som automatiskt analyserar Forex- och guldmarknaden och genererar professionella trade-signaler med Entry, SL, TP1, TP2 och TP3.
+> An AI-driven trading-analysis platform that automatically analyzes the gold and
+> Forex markets, generates professional trade signals (Entry, SL, TP1, TP2, TP3),
+> and — going forward — **measures its own track record** so quality can be proven.
 
----
-
-## 1. Projektöversikt
-
-TradeSignal AI är en fullstack webbapplikation som automatiskt hämtar marknadsdata för valutapar (XAUUSD, GBPUSD, EURUSD m.fl.), beräknar tekniska indikatorer och skickar dessa till en AI-modell för djupanalys. Systemet genererar strukturerade trade-signaler (BUY/SELL) med tydliga Entry-priser, Stop Loss och tre Take Profit-nivåer.
-
-Plattformen är byggd för skalbarhet, separation of concerns och en flerlager-arkitektur som gör det enkelt att lägga till nya funktioner, valutapar, AI-modeller och betalningslösningar i framtiden.
-
-### Affärsmål
-- Fas 1: Fungerade produkt med automatisk signalgenerering (detta projekt)
-- Fas 2: Användarregistrering och betalda prenumerationer
-- Fas 3: Mobilapp (React Native / Expo)
+> **Status:** This document describes the *actual* implementation (backend
+> Iterations 1-8, frontend Iterations 1-8) plus the *planned* build-out (backend
+> Iterations 6-11, frontend Iterations 9-13). Planned fields and endpoints are
+> clearly marked *(planned — Iteration X)*.
 
 ---
 
-## 2. Teknisk Stack
+## 1. Project Overview
+
+TradeSignal AI is a fullstack web application that automatically pulls market data
+for a trading pair across **multiple timeframes** (5m, 15m, 1h, 4h, 1d), computes
+technical indicators per timeframe, and sends it all to an AI model for a
+**top-down, multi-timeframe analysis**.
+
+Unlike a simple "buy/sell/neutral" system, the platform runs in an **always-on**
+mode: for every run the AI produces *two* directional ideas per pair — a short-term
+**scalp** (framed on the lower timeframes, tight stop, near targets) and a **swing**
+(framed on the higher timeframes, wider stop, extended targets). Lack of conviction
+is expressed as a **low confidence value**, never as a refusal to trade. Each open
+signal is fed back into the next run so the model can **keep or adjust** the idea
+against fresh data.
+
+### Current focus: Gold only (XAUUSD)
+Twelve Data's free tier has a per-minute limit that is consumed by the
+multi-timeframe fetch for a single pair (five calls per pair per run). For now
+`ACTIVE_PAIRS` is therefore narrowed to **XAUUSD**. The architecture remains fully
+multi-pair — nothing hard-codes gold; only the active set is narrowed.
+
+### Business goals
+- **Phase 1:** A working product with automated signal generation *(done)*
+- **Phase 1.5:** A measurable, self-improving, real-time platform *(in progress — see §14)*
+- **Phase 2:** User registration and paid subscriptions
+- **Phase 3:** Mobile app (React Native / Expo)
+
+---
+
+## 2. Tech Stack
 
 ### Frontend
-| Komponent | Val | Motivering |
+| Component | Choice | Rationale |
 |---|---|---|
-| Framework | Next.js 14 (App Router) | SSR för SEO, filbaserad routing, Vercel-deploy |
-| Språk | TypeScript | Typssäkerhet, kodkvalitet, auto-completion |
-| Styling | Tailwind CSS | Utility-first, snabb utveckling |
-| Charts | Lightweight Charts (TradingView) | Professionella finansiella charts |
-| State | Zustand | Enkelt, skalbart state management |
-| HTTP-klient | Axios + React Query | Caching, loading states, error handling |
-| Formulär | React Hook Form + Zod | Validering med TypeScript-integration |
+| Framework | Next.js 16 (App Router) | SSR for SEO, file-based routing, Vercel deploy |
+| Language | TypeScript | Type safety, code quality, auto-completion |
+| Styling | Tailwind CSS 4 | Utility-first, fast development |
+| Charts | Lightweight Charts (TradingView) | Professional financial charts |
+| State | Zustand | Simple, scalable state management + `localStorage` persistence |
+| HTTP client | Axios + React Query | Caching, loading states, auto-refresh, error handling |
+| Forms | React Hook Form + Zod | Validation with TypeScript integration |
+| Icons | lucide-react | Consistent icon set |
+| Tests | Vitest + React Testing Library + Playwright | Unit/component + route smoke |
 
 ### Backend
-| Komponent | Val | Motivering |
+| Component | Choice | Rationale |
 |---|---|---|
-| Framework | Python + FastAPI | Async, snabb, OpenAPI-docs automatiskt |
-| Språk | Python 3.12+ | AI/ML-ekosystemet lever i Python |
-| Schemaläggning | APScheduler | Kör analysjobb var 15:e minut, ingen Redis krävs |
-| Indikatorer | pandas-ta | Beräknar RSI, MACD, EMA, BB, ATR automatiskt |
-| ORM | SQLAlchemy 2.0 | Async ORM, databasagnostisk |
-| Migrationer | Alembic | Versionshantering av databasschema |
-| Validering | Pydantic v2 | Request/response-validering, TypeScript-typer kan genereras |
+| Framework | Python 3.12+ + FastAPI | Async, fast, automatic OpenAPI docs |
+| Scheduling | APScheduler | Runs analysis + outcome jobs on cadence, no Redis required |
+| Indicators | pandas-ta-classic | RSI, MACD, EMA/SMA, Bollinger, ATR |
+| ORM | SQLAlchemy 2.0 (async) | Database-agnostic, async sessions |
+| Migrations | Alembic | Schema version control |
+| Validation | Pydantic v2 + pydantic-settings | Request/response validation, fail-fast config |
 
-### AI-lager
-| Komponent | Val | Motivering |
+### AI layer
+| Component | Choice | Rationale |
 |---|---|---|
-| Dev-modell | Groq API (Llama 3.3 70B) | Gratis under utveckling, snabb |
-| Prod-modell | Claude Sonnet 4.6 (Anthropic) | Stark reasoning, strukturerade svar |
-| Strategi | Miljövariabel-styrning | Byta modell utan kodändring |
+| Dev model | Groq API (Llama 3.3 70B) | Free during development, fast |
+| Prod model | Claude Sonnet (Anthropic) | Strong reasoning, structured responses |
+| Strategy | Provider Pattern + env-var switching | Swap models without code changes |
 
-### Datakälla
-| Komponent | Val | Motivering |
+### Data source
+| Component | Choice | Rationale |
 |---|---|---|
-| Market data | Twelve Data API | Stödjer XAUUSD, GBPUSD, EURUSD, gratis tier |
-| Format | OHLCV (1H candles) | Tillräcklig granularitet för swing/day trading |
+| Market data | Twelve Data API | Supports XAUUSD and more, free tier |
+| Format | OHLCV per timeframe | Multi-timeframe (5m → 1d) for scalp + swing |
 
-### Databas
-| Komponent | Val | Motivering |
-|---|---|---|
-| Databas | PostgreSQL 16 | Robust, skalbar, JSONB-stöd |
-| Driver | asyncpg | Async PostgreSQL-driver |
+### Database
+| Component | Choice |
+|---|---|
+| Database | PostgreSQL 16 (JSONB, native enums) |
+| Driver | asyncpg |
 
 ### DevOps
-| Komponent | Val |
+| Component | Choice |
 |---|---|
-| Containerisering | Docker + Docker Compose |
 | Frontend deploy | Vercel |
-| Backend deploy | Railway / VPS |
-| Miljöhantering | .env filer per miljö |
-| Versionshantering | GitHub (monorepo) |
+| Backend deploy | Railway / VPS *(target not yet settled)* |
+| Environment | `.env` files per environment |
+| Version control | GitHub (monorepo) |
+| Containerization | Docker *(deferred until the deploy target is settled)* |
 
 ---
 
-## 3. Projektstruktur (Monorepo)
+## 3. Project Structure (Monorepo — actual)
 
 ```
-tradesignal-ai/
+TradeSignalApp/
+├── PROJECT_DESCRIPTION.md
 ├── README.md
-├── .gitignore
-├── docker-compose.yml              # Lokal dev: backend + postgres
 │
-├── frontend/                       # Next.js 14 + TypeScript
-│   ├── public/
-│   ├── src/
-│   │   ├── app/                    # App Router (Next.js 14)
-│   │   │   ├── layout.tsx
-│   │   │   ├── page.tsx            # Landningssida
-│   │   │   ├── dashboard/
-│   │   │   │   └── page.tsx        # Signal dashboard
-│   │   │   └── signals/
-│   │   │       └── [pair]/
-│   │   │           └── page.tsx    # Detaljvy per par
-│   │   ├── components/
-│   │   │   ├── ui/                 # Generiska UI-komponenter
-│   │   │   │   ├── Button.tsx
-│   │   │   │   ├── Card.tsx
-│   │   │   │   ├── Badge.tsx
-│   │   │   │   └── LoadingSpinner.tsx
-│   │   │   ├── charts/
-│   │   │   │   ├── CandlestickChart.tsx
-│   │   │   │   └── SignalOverlay.tsx
-│   │   │   ├── signals/
-│   │   │   │   ├── SignalCard.tsx
-│   │   │   │   ├── SignalList.tsx
-│   │   │   │   └── SignalBadge.tsx
-│   │   │   └── layout/
-│   │   │       ├── Navbar.tsx
-│   │   │       └── Sidebar.tsx
-│   │   ├── services/               # API-anrop till backend
-│   │   │   ├── api.ts              # Axios-instans + interceptors
-│   │   │   ├── signalService.ts
-│   │   │   └── pairService.ts
-│   │   ├── store/                  # Zustand stores
-│   │   │   ├── signalStore.ts
-│   │   │   └── uiStore.ts
-│   │   ├── types/                  # TypeScript interfaces
-│   │   │   ├── signal.ts
-│   │   │   ├── pair.ts
-│   │   │   └── api.ts
-│   │   ├── hooks/                  # Custom React hooks
-│   │   │   ├── useSignals.ts
-│   │   │   └── usePairs.ts
-│   │   └── lib/                    # Utilities
-│   │       ├── formatters.ts
-│   │       └── constants.ts
-│   ├── .env.local
-│   ├── next.config.ts
-│   ├── tailwind.config.ts
-│   ├── tsconfig.json
-│   └── package.json
+├── frontend/                       # Next.js 16 + React 19 + TypeScript
+│   ├── README.md                   # Frontend plan + iterations
+│   ├── package.json
+│   ├── playwright.config.ts
+│   ├── vitest.config.ts
+│   ├── e2e/                         # Playwright route smoke
+│   └── src/
+│       ├── app/                    # App Router
+│       │   ├── layout.tsx, page.tsx (dashboard), providers.tsx
+│       │   ├── error.tsx, global-error.tsx, loading.tsx, not-found.tsx
+│       │   ├── robots.ts, sitemap.ts
+│       │   ├── dashboard/page.tsx
+│       │   ├── signals/page.tsx + [signalId]/page.tsx
+│       │   ├── pairs/[symbol]/page.tsx
+│       │   └── analysis/page.tsx + [runId]/page.tsx
+│       ├── components/             # ui/, charts/, signals/, analysis/,
+│       │   │                       # dashboard/, layout/, health/, feedback/, common/
+│       ├── hooks/                  # useTradeQueries, useHealthQuery, useNow
+│       ├── lib/                    # formatters, trading, indicators, signalFilters,
+│       │   │                       # signalMappers, analysisRun, analytics, monitoring
+│       ├── services/               # api.ts, tradeService.ts, healthService.ts
+│       ├── store/                  # signalStore, uiStore, notificationStore, toastStore
+│       └── types/                  # signal, tradeApi, api, health
 │
-├── backend/                        # Python + FastAPI
-│   ├── app/
-│   │   ├── main.py                 # FastAPI app entry point
-│   │   ├── config.py               # Settings (pydantic-settings)
-│   │   │
-│   │   ├── models/                 # SQLAlchemy datamodeller (M i MVC)
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py             # Base class för alla modeller
-│   │   │   ├── signal.py           # Signal-modell
-│   │   │   ├── pair.py             # TradingPair-modell
-│   │   │   └── analysis_run.py     # Logg över varje analyskörning
-│   │   │
-│   │   ├── schemas/                # Pydantic schemas (request/response)
-│   │   │   ├── __init__.py
-│   │   │   ├── signal.py
-│   │   │   ├── pair.py
-│   │   │   └── analysis.py
-│   │   │
-│   │   ├── controllers/            # Affärslogik (C i MVC)
-│   │   │   ├── __init__.py
-│   │   │   ├── signal_controller.py
-│   │   │   └── analysis_controller.py
-│   │   │
-│   │   ├── views/                  # FastAPI routers = API-endpoints (V i MVC)
-│   │   │   ├── __init__.py
-│   │   │   ├── signals.py          # GET /signals, GET /signals/{id}
-│   │   │   ├── pairs.py            # GET /pairs
-│   │   │   └── health.py           # GET /health
-│   │   │
-│   │   ├── services/               # Externa integrationer
-│   │   │   ├── __init__.py
-│   │   │   ├── market_data/
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── base.py         # Abstract base class
-│   │   │   │   └── twelve_data.py  # Twelve Data implementation
-│   │   │   ├── ai/
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── base.py         # Abstract AI-provider base
-│   │   │   │   ├── groq_provider.py
-│   │   │   │   └── anthropic_provider.py
-│   │   │   └── indicators/
-│   │   │       ├── __init__.py
-│   │   │       └── calculator.py   # pandas-ta beräkningar
-│   │   │
-│   │   ├── tasks/                  # APScheduler jobb
-│   │   │   ├── __init__.py
-│   │   │   └── analysis_job.py     # Schemalagd analyskörning
-│   │   │
-│   │   └── database/
-│   │       ├── __init__.py
-│   │       ├── connection.py       # Async SQLAlchemy engine
-│   │       └── repository/         # Databasoperationer
-│   │           ├── __init__.py
-│   │           ├── base.py
-│   │           ├── signal_repo.py
-│   │           └── pair_repo.py
-│   │
-│   ├── migrations/                 # Alembic migrationer
-│   │   ├── env.py
-│   │   └── versions/
-│   ├── tests/
-│   │   ├── unit/
-│   │   └── integration/
-│   ├── .env
-│   ├── .env.example
-│   ├── alembic.ini
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   └── pyproject.toml
-│
-└── docs/
-    ├── PROJECT_DESCRIPTION.md      # Detta dokument
-    └── api/                        # API-dokumentation
+└── backend/                        # Python + FastAPI
+    ├── README.md                   # Backend plan + iterations
+    ├── alembic.ini
+    ├── requirements.txt / requirements-dev.txt
+    ├── db/                          # Local bootstrap SQL + README
+    │   ├── create_local_database.sql, seed_pairs.sql, check_database.sql
+    ├── migrations/                  # Alembic (env.py + versions/)
+    ├── app/
+    │   ├── __init__.py              # __version__
+    │   ├── main.py                  # create_app() + lifespan
+    │   ├── config.py                # Settings (typed, fail-fast)
+    │   ├── dependencies.py          # FastAPI deps (sessions, repos, controllers)
+    │   ├── error_handlers.py        # Central exception→envelope mapping
+    │   ├── logging_config.py
+    │   │
+    │   ├── models/                  # SQLAlchemy: base, pair, signal, analysis_run
+    │   ├── schemas/                 # Pydantic: common, health, pair, signal, analysis
+    │   ├── controllers/             # analysis_controller, signal_controller,
+    │   │                            # analysis_run_controller, pair_controller,
+    │   │                            # results, exceptions
+    │   ├── views/                   # Routers: health, signals, pairs, analysis
+    │   ├── services/
+    │   │   ├── market_data/         # Candle, MarketDataProvider ABC, TwelveDataProvider
+    │   │   ├── indicators/          # IndicatorCalculator (pure) → IndicatorSnapshot
+    │   │   └── ai/                  # AIProvider template + Groq/Anthropic,
+    │   │       └── prompts/         # hedge_fund_analyst.md (editable persona)
+    │   ├── tasks/                   # scheduler.py + analysis_job.py
+    │   └── database/                # connection.py (Database adapter) + repository/
+    └── tests/                       # unit/ + integration/
 ```
+
+> **Planned additions** (see §14): `services/outcome/` (outcome evaluator),
+> `services/calendar/` (economic calendar), `services/risk/` (position sizing),
+> `services/notify/` (Telegram etc.), `tasks/outcome_job.py`, plus the router
+> `views/performance.py` and the frontend route `app/performance/`.
 
 ---
 
-## 4. Databasschema
+## 4. Database Schema (actual + planned)
 
-### Tabell: trading_pairs
-```sql
-CREATE TABLE trading_pairs (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    symbol      VARCHAR(20) UNIQUE NOT NULL,  -- "XAUUSD", "GBPUSD"
-    name        VARCHAR(100) NOT NULL,         -- "Gold / US Dollar"
-    is_active   BOOLEAN DEFAULT TRUE,
-    timeframe   VARCHAR(10) DEFAULT '1h',      -- Analysgranularitet
-    created_at  TIMESTAMPTZ DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ DEFAULT NOW()
-);
+All money columns are `Numeric` (never `Float`) — float rounding compounds at the
+pip level and can change a signal's reported Entry/SL/TP between writes.
+`confidence` is stored as `Numeric(5,4)` in the range **0..1** (not 1-100). Status
+and trigger fields are **native Postgres enums** so free-text writes are rejected at
+the database layer.
+
+### Table: `pairs`
+```text
+id              INTEGER PRIMARY KEY
+symbol          VARCHAR(16) UNIQUE NOT NULL      -- "XAUUSD"
+base_currency   VARCHAR(8)  NOT NULL             -- "XAU"
+quote_currency  VARCHAR(8)  NOT NULL             -- "USD"
+display_name    VARCHAR(64)                      -- "Gold / US Dollar"
+is_active       BOOLEAN NOT NULL DEFAULT TRUE    -- soft-disable, preserves history
+created_at / updated_at  TIMESTAMPTZ
+-- (planned — Iteration 11) contract spec for position sizing:
+--   pip_value, min_lot, contract_size
 ```
 
-### Tabell: signals
-```sql
-CREATE TABLE signals (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    pair_id         UUID REFERENCES trading_pairs(id),
-    direction       VARCHAR(4) NOT NULL,        -- "BUY" | "SELL"
-    entry_price     DECIMAL(18, 5) NOT NULL,
-    stop_loss       DECIMAL(18, 5) NOT NULL,
-    take_profit_1   DECIMAL(18, 5) NOT NULL,
-    take_profit_2   DECIMAL(18, 5),
-    take_profit_3   DECIMAL(18, 5),
-    confidence      INTEGER,                    -- 1-100, AI:ns självskattning
-    reasoning       TEXT,                       -- AI:ns motivering
-    status          VARCHAR(20) DEFAULT 'ACTIVE', -- ACTIVE | HIT_TP1 | HIT_SL | EXPIRED
-    raw_ai_response JSONB,                      -- Hela AI-svaret för debugging
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    expires_at      TIMESTAMPTZ,                -- När signalen anses inaktuell
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
+### Table: `analysis_runs`
+```text
+id              UUID PRIMARY KEY
+status          ENUM analysis_run_status         -- pending|running|success|partial|failed
+trigger         ENUM analysis_run_trigger        -- scheduler|manual
+timeframe       VARCHAR(8) NOT NULL              -- primary (decision) timeframe
+candle_count    INTEGER NOT NULL
+started_at      TIMESTAMPTZ NOT NULL
+finished_at     TIMESTAMPTZ                      -- CHECK: >= started_at
+pairs_processed INTEGER NOT NULL DEFAULT 0       -- CHECK: >= 0
+pairs_failed    INTEGER NOT NULL DEFAULT 0       -- CHECK: >= 0
+ai_provider     VARCHAR(32)                      -- snapshot for traceability
+ai_model        VARCHAR(64)
+error_message   TEXT
+created_at / updated_at  TIMESTAMPTZ
+-- (planned — Iteration 8) AI cost/tokens:
+--   prompt_tokens, completion_tokens, cost_usd
 ```
+`status = partial` is deliberately distinct from `failed`: a run that succeeded for
+some pairs but failed on others should not be reported as a total miss.
 
-### Tabell: analysis_runs
-```sql
-CREATE TABLE analysis_runs (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    pair_id         UUID REFERENCES trading_pairs(id),
-    status          VARCHAR(20) NOT NULL,       -- SUCCESS | FAILED | SKIPPED
-    ai_provider     VARCHAR(50),                -- "groq" | "anthropic"
-    ai_model        VARCHAR(100),               -- Modellnamn
-    indicators_used JSONB,                      -- Snapshot av indikatorer
-    error_message   TEXT,
-    duration_ms     INTEGER,                    -- Analystid i millisekunder
-    created_at      TIMESTAMPTZ DEFAULT NOW()
-);
+### Table: `signals`
+```text
+id                 UUID PRIMARY KEY
+pair_id            INTEGER REFERENCES pairs(id) ON DELETE CASCADE
+analysis_run_id    UUID REFERENCES analysis_runs(id) ON DELETE SET NULL
+direction          ENUM signal_direction          -- buy|sell|neutral
+signal_type        ENUM signal_type               -- scalp|swing
+confidence         NUMERIC(5,4) NOT NULL          -- CHECK: 0..1
+entry_price        NUMERIC(20,8) NOT NULL         -- CHECK: > 0
+stop_loss          NUMERIC(20,8)
+take_profit        NUMERIC(20,8)                  -- TP1
+take_profit_2      NUMERIC(20,8)                  -- TP2
+take_profit_3      NUMERIC(20,8)                  -- TP3
+timeframe          VARCHAR(8) NOT NULL            -- timeframe the signal was framed on
+rationale          TEXT                           -- the AI's desk note
+indicators_snapshot JSONB                         -- indicators per timeframe, for back-test
+generated_at       TIMESTAMPTZ NOT NULL
+expires_at         TIMESTAMPTZ                    -- drives freshness badge + retention
+ai_provider        VARCHAR(32)
+ai_model           VARCHAR(64)
+created_at / updated_at  TIMESTAMPTZ
+
+-- (planned — Iteration 6) outcome tracking:
+--   outcome          ENUM signal_outcome   -- open|hit_tp1|hit_tp2|hit_tp3|hit_sl|expired|cancelled
+--   closed_at        TIMESTAMPTZ
+--   realized_r       NUMERIC               -- actual R multiple (+2.3 / -1.0)
+--   mfe / mae        NUMERIC               -- max favourable / adverse excursion
+--   last_evaluated_at TIMESTAMPTZ
 ```
+Key constraints:
+- `UNIQUE(pair_id, analysis_run_id, signal_type)` — a run produces at most one
+  scalp + one swing per pair.
+- Indexes `(pair_id, generated_at)` and `(pair_id, signal_type, generated_at)` serve
+  "latest signal(s) for pair X (per style)".
 
 ---
 
-## 5. MVC-arkitektur och Dataflöde
+## 5. MVC Architecture and Data Flow
 
-### Analysflöde (automatiskt, var 15:e minut)
+### Layering rules
+| Layer | May import | May NOT import |
+|---|---|---|
+| `schemas/` | pydantic, stdlib | fastapi, sqlalchemy, services |
+| `dependencies.py` | fastapi, schemas, config | controllers, services |
+| `views/` | dependencies, schemas, controllers | services/database directly |
+| `controllers/` | services, repositories, schemas | views, fastapi |
+| `services/` | stdlib, SDKs, schemas | views, controllers |
 
+### Analysis flow (automatic, every 15 minutes)
 ```
-APScheduler (tasks/analysis_job.py)
+APScheduler → AnalysisJob (error-isolating wrapper)
     │
     ▼
-AnalysisController.run_analysis(pair)
+AnalysisController.run_analysis()
+    │  Phase 1 (short transaction): open a RUNNING row + snapshot the active pairs
+    │          and their open scalp/swing signals (keep/adjust context)
     │
-    ├─► MarketDataService.fetch_ohlcv(symbol, timeframe)
-    │       └─► Twelve Data API → returnerar 200 OHLCV-stearinljus
+    ├─ Phase 2 (no DB, all network IO) — per pair:
+    │     for each timeframe (5m,15m,1h,4h,1d):
+    │        MarketDataProvider.fetch_candles()  → Twelve Data
+    │        IndicatorCalculator.compute()       → IndicatorSnapshot (pure)
+    │     AIProvider.analyze(AnalysisContext)    → DualSignalDraft (scalp + swing)
     │
-    ├─► IndicatorCalculator.calculate(df)
-    │       └─► pandas-ta → RSI, MACD, EMA20/50/200, BB, ATR, Volume
+    └─ Phase 3 (one transaction): write signals (scalp + swing per pair) +
+            stamp the run's terminal status (SUCCESS/PARTIAL/FAILED)
+```
+No transaction is held open across network IO; per-pair failures are isolated (one
+pair's provider timeout doesn't deprive the others of their signals).
+
+### Outcome flow *(planned — Iteration 6)*
+```
+APScheduler → OutcomeJob (own cadence, OUTCOME_INTERVAL_MINUTES)
     │
-    ├─► AIProvider.analyze(indicators, pair)
-    │       └─► Groq/Anthropic API → strukturerat JSON-svar
-    │
-    ├─► SignalController.create_signal(ai_response, pair)
-    │       └─► Validerar, sparar till PostgreSQL via SignalRepository
-    │
-    └─► AnalysisRunRepository.log(run_details)
+    ├─ one cheap candle fetch for the active pair
+    ├─ load open signals
+    ├─ OutcomeEvaluator (pure): SL/TP touch + realized R per signal
+    └─ persist outcomes in one transaction
 ```
 
-### API-anropsflöde (frontend → backend)
-
+### API request flow (frontend → backend)
 ```
-Next.js Frontend
-    │
-    ├─► GET /api/v1/signals?pair=XAUUSD&limit=10
-    │       └─► signals router → SignalController → SignalRepository → PostgreSQL
-    │
-    ├─► GET /api/v1/signals/{id}
-    │       └─► Enskild signal med full motivering
-    │
-    └─► GET /api/v1/pairs
-            └─► Alla aktiva valutapar
+Next.js  →  GET /api/v1/signals?pair=XAUUSD&page=1&per_page=20[&outcome=...]
+         →  GET /api/v1/signals/{id}
+         →  GET /api/v1/pairs/{symbol}/signals
+         →  GET /api/v1/analysis/runs[/{id}[/signals]]
+         →  GET /api/v1/performance        (planned — Iteration 7)
+         →  GET /api/v1/stream  (SSE)        (planned — Iteration 10)
 ```
 
 ---
 
-## 6. AI-analysprompt (Systemprompt)
+## 6. AI Analysis (multi-timeframe, dual signal)
 
-Följande systemprompt skickas till AI-modellen vid varje analyskörning:
+The persona, method, and risk rules live in an **editable Markdown file**
+(`app/services/ai/prompts/hedge_fund_analyst.md`) so prompt tuning requires no code
+change. The strict JSON **output contract**, by contrast, is built in code
+(`BaseAIProvider._build_system_prompt`) so the documented keys can never drift from
+the `DualSignalDraft` schema they must satisfy.
 
-```
-Du är en erfaren institutionell Forex- och råvaruanalytiker med 15 års erfarenhet 
-från ett globalt Hedge Fund. Du specialiserar dig på teknisk analys av XAUUSD, 
-GBPUSD och EURUSD på H1-timeframe.
+**System prompt (summary):** a senior portfolio manager on a macro/FX & precious-
+metals desk. Reads the tape **top-down** across timeframes (highest = context,
+lowest = timing). Runs **always-on**: always produces two directional ideas (scalp +
+swing), never sits flat, and expresses uncertainty as a low `confidence`. Never
+invents levels that aren't in the input. Keeps/adjusts open signals.
 
-Din uppgift är att analysera de tekniska indikatorerna nedan och ge en 
-välmotiverad trade-rekommendation.
+**User prompt (per analysis, built in `_build_user_prompt`):**
+- Instrument + primary (decision) timeframe.
+- Per timeframe (presented highest → lowest): indicator snapshot (rounded) + the
+  most recent ~30 candles.
+- The pair's currently-open scalp/swing signals (KEEP/ADJUST context).
+- *(planned — Iteration 8)* a compact "recent performance" block (hit-rate, avg R,
+  confidence bias) so the model calibrates against its own track record.
+- *(planned — Iteration 9)* upcoming high-impact USD events (CPI/FOMC/NFP).
 
-Analysregler:
-- Identifiera den dominerande trenden (bullish/bearish/sideways)
-- Bedöm momentum och eventuella divergenser
-- Basera SL på marknadsstruktur (senaste swing high/low), inte på pip-avstånd
-- TP1 = konservativt mål (risk/reward minst 1:1.5)
-- TP2 = moderat mål (nästa strukturnivå)
-- TP3 = ambitiöst mål (om trenden fortsätter)
-- Ge ALDRIG en signal om conviction < 60%
-- Om markanden är oklar, returnera direction: "NEUTRAL"
-
-Returnera EXAKT detta JSON-format och inget annat:
+**Output contract (strict JSON):**
+```jsonc
 {
-  "direction": "BUY" | "SELL" | "NEUTRAL",
-  "entry_price": float,
-  "stop_loss": float,
-  "take_profit_1": float,
-  "take_profit_2": float | null,
-  "take_profit_3": float | null,
-  "confidence": int (1-100),
-  "reasoning": "Kort motivering på engelska (max 3 meningar)",
-  "trend": "BULLISH" | "BEARISH" | "SIDEWAYS",
-  "key_levels": [float]
+  "scalp": {
+    "direction": "buy" | "sell",          // never "neutral"
+    "confidence": 0.0-1.0,
+    "entry": number,
+    "stop_loss": number,
+    "take_profits": [number, ...],        // 1..3, ordered TP1..TP3
+    "rationale": "short desk note"
+  },
+  "swing": { ... same shape ... }
 }
 ```
-
-### Användarprompt-mall (skickas per analys)
-
-```
-Analysera {SYMBOL} på {TIMEFRAME} timeframe.
-Aktuellt pris: {CURRENT_PRICE}
-Senaste {N} stearinljus OHLCV: {OHLCV_JSON}
-
-Beräknade tekniska indikatorer:
-- RSI(14): {RSI}
-- MACD Line: {MACD_LINE}, Signal: {MACD_SIGNAL}, Histogram: {MACD_HIST}
-- EMA20: {EMA20}, EMA50: {EMA50}, EMA200: {EMA200}
-- Bollinger Bands: Upper {BB_UPPER}, Middle {BB_MIDDLE}, Lower {BB_LOWER}
-- ATR(14): {ATR}
-- Volym (relativt 20-perioder snitt): {VOLUME_RATIO}x
-
-Ge din analys och trade-rekommendation.
-```
+The response is validated into a `DualSignalDraft`; each signal must be directional
+(buy/sell) with an entry price, otherwise *that pair* fails for *that run* (per-pair
+isolation). *(planned — Iteration 8)* the parsing is replaced with the provider's
+native structured output (Anthropic tool-use / Groq JSON-mode), with today's regex
+extraction as a fallback.
 
 ---
 
-## 7. AI-providerstrategi (Miljöväxling)
+## 7. Provider Strategy (env switching)
 
-Backend väljer AI-provider baserat på miljövariabler. Ingen kodändring krävs för att byta modell.
+The backend chooses its AI and market-data providers via environment variables — no
+code change to swap models. Each external integration implements an abstract base
+class and is constructed by a factory.
 
-### .env (development)
 ```env
+# Development
 AI_PROVIDER=groq
 AI_MODEL=llama-3.3-70b-versatile
-AI_API_KEY=gsk_xxxxxxxxxxxx
-```
 
-### .env (production)
-```env
+# Production
 AI_PROVIDER=anthropic
 AI_MODEL=claude-sonnet-4-6
-AI_API_KEY=sk-ant-xxxxxxxxxxxx
 ```
 
-### Abstract AI Provider (services/ai/base.py)
-```python
-from abc import ABC, abstractmethod
-from app.schemas.analysis import AIAnalysisResult
-
-class BaseAIProvider(ABC):
-    @abstractmethod
-    async def analyze(self, prompt: str, system_prompt: str) -> AIAnalysisResult:
-        pass
-```
-
-Varje provider (Groq, Anthropic) implementerar `BaseAIProvider`. `AnalysisController` väljer provider baserat på `AI_PROVIDER`-variabeln vid startup.
+`BaseAIProvider` (Template Method) owns prompt building, JSON extraction, validation,
+and the "a directional signal needs an entry" rule — *once*. Each concrete provider
+(Groq, Anthropic) implements only `_complete()` and translates its SDK errors into
+`AIRequestError`. Adding a third provider is a ~20-line file.
 
 ---
 
-## 8. API-endpoints (v1)
+## 8. API Endpoints (v1)
+
+Every response follows a shared envelope (`{"success": true, "data": ...}` or
+`{"success": false, "error": {...}}`), except `/health`, which returns the health
+document directly so external monitors can ingest it unwrapped.
 
 ### Signals
-| Method | Endpoint | Beskrivning |
+| Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/signals` | Hämta senaste signaler, filtrera på pair |
-| GET | `/api/v1/signals/{id}` | Hämta enskild signal med full motivering |
-| GET | `/api/v1/signals/latest` | Senaste aktiva signalen per par |
+| GET | `/api/v1/signals` | Paginated list; filters `?pair=`, `?run_id=`, `?signal_type=` *(and `?outcome=` — Iteration 6)* |
+| GET | `/api/v1/signals/{signal_id}` | Single signal with full rationale (404 if unknown) |
 
 ### Pairs
-| Method | Endpoint | Beskrivning |
+| Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/pairs` | Alla aktiva valutapar |
-| GET | `/api/v1/pairs/{symbol}` | Info om specifikt par |
+| GET | `/api/v1/pairs` | All pairs; `?include_inactive=` |
+| GET | `/api/v1/pairs/{symbol}` | Info about a specific pair (404 if unknown) |
+| GET | `/api/v1/pairs/{symbol}/signals` | Latest signals for the pair; `?limit=` |
 
-### System
-| Method | Endpoint | Beskrivning |
+### Analysis & system
+| Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/health` | Hälsostatus för API och databas |
-| GET | `/api/v1/analysis/runs` | Logg över senaste analyskörningar |
-| POST | `/api/v1/analysis/trigger` | Manuell trigger av analys (dev/admin) |
+| GET | `/api/v1/health` | Health status (DB, scheduler, market_data, ai_provider) |
+| GET | `/api/v1/analysis/runs` | Paginated run ledger; `?status=` |
+| GET | `/api/v1/analysis/runs/{run_id}` | Single run (404 if unknown) |
+| GET | `/api/v1/analysis/runs/{run_id}/signals` | Signals per run |
+| POST | `/api/v1/analysis/runs` | Manual trigger → `202` + background job |
 
-Alla endpoints är prefixade med `/api/v1/` för framtida versionshantering.
+### Planned endpoints
+| Method | Endpoint | Iteration |
+|---|---|---|
+| GET | `/api/v1/performance` | 7 — track record, calibration, equity curve |
+| GET | `/api/v1/calendar` | 9 — upcoming high-impact events |
+| GET | `/api/v1/stream` (SSE) | 10 — real-time events to the frontend |
+| POST | `/api/v1/risk/position-size` | 11 — position sizing (stateless) |
 
 ---
 
-## 9. Frontend Sidor och Komponenter
+## 9. Frontend — Pages and Components
 
-### Sidor
-| Sida | Route | Innehåll |
+### Pages (actual routes)
+| Page | Route | Content |
 |---|---|---|
-| Dashboard | `/dashboard` | Översikt av alla aktiva signaler |
-| Signal Detail | `/signals/[id]` | Fullständig signal med chart och AI-motivering |
-| Pair View | `/dashboard/[pair]` | Chart + signalhistorik för ett specifikt par |
-| Landing | `/` | Marknadsföringssida (SEO-optimerad via SSR) |
+| Dashboard | `/` and `/dashboard` | Luxury fintech ops dashboard, live signal endpoints |
+| Signals | `/signals` | Browse all signals, URL-synced filters + pagination |
+| Signal detail | `/signals/[signalId]` | Full signal: level map, indicators panel, rationale |
+| Pair detail | `/pairs/[symbol]` | Latest signals + levels for a pair |
+| Analysis runs | `/analysis` | Run ledger (status filter, pagination) |
+| Run detail | `/analysis/[runId]` | A run's signals + metadata |
+| **Performance** | `/performance` | *(planned — Iteration 10)* win-rate, equity curve, calibration |
 
-### Nyckelkomponenter
+### Key components (actual)
+- **SignalCard / SignalList / SignalBadge** — compact signal view (direction, Entry,
+  SL, TP1-3, confidence, freshness badge, entry→SL/TP distance in %).
+  *(planned — Iteration 9)* outcome badge (`✓ TP2 +2.1R` / `✗ SL −1R`).
+- **SignalLevelMap / SignalOverlay** — %-positioned level map driven by signal levels
+  + indicators (no OHLCV feed, so inherently responsive).
+- **IndicatorsPanel** — RSI/MACD/EMA/BB/ATR from `indicators_snapshot`.
+- **CommandPalette (Cmd/Ctrl+K)**, **NotificationBell**, **Toaster** — global search,
+  notification feed, toasts. *(planned — Iteration 11)* fed by real-time SSE events.
+- **AppShell / DashboardShell** — navigation shell, breadcrumbs, active route.
 
-**SignalCard** — Visar en signal kompakt:
-- Par-symbol och riktning (BUY/SELL badge i grönt/rött)
-- Entry, SL, TP1/TP2/TP3 priser
-- Confidence-procent
-- Tidsstämpel och status
-
-**CandlestickChart** — TradingView Lightweight Charts:
-- OHLCV-stearinljus på H1
-- Overlay med signallinjer (Entry, SL, TP1, TP2, TP3)
-- Automatisk skalning
-
-**SignalList** — Lista av SignalCards med filter på par och status.
+State: Zustand (`signalStore`, `uiStore`, `notificationStore`, `toastStore`) with
+`localStorage` persistence for UI preferences. Data: React Query with
+`refetchInterval` (auto-refresh) and "updated X ago" timestamps.
 
 ---
 
-## 10. Konfiguration och Miljövariabler
+## 10. Configuration and Environment Variables
 
-### Backend (.env)
+### Backend (`.env`) — actual
 ```env
 # App
-APP_ENV=development
+APP_ENV=development                 # development|staging|production|test
 APP_HOST=0.0.0.0
 APP_PORT=8000
 DEBUG=true
+CORS_ALLOWED_ORIGINS=http://localhost:3000   # CSV; empty = CORS off
 
-# Databas
+# Database
 DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/tradesignal
+# DATABASE_POOL_SIZE=10 / DATABASE_MAX_OVERFLOW=20 / DATABASE_POOL_RECYCLE_SECONDS=1800
 
-# AI Provider
-AI_PROVIDER=groq                        # groq | anthropic
+# AI
+AI_PROVIDER=groq                    # groq|anthropic
 AI_MODEL=llama-3.3-70b-versatile
-AI_API_KEY=your_api_key_here
+AI_API_KEY=...
+# AI_TEMPERATURE=0.2 / AI_MAX_TOKENS=2048 / AI_TIMEOUT_SECONDS=30
 
-# Market Data
+# Market data
 MARKET_DATA_PROVIDER=twelve_data
-TWELVE_DATA_API_KEY=your_key_here
+TWELVE_DATA_API_KEY=...
+# MARKET_DATA_TIMEOUT_SECONDS=15 / MARKET_DATA_MAX_RETRIES=3
 
-# Analys
-ANALYSIS_INTERVAL_MINUTES=15           # Hur ofta analysen körs
-ANALYSIS_CANDLE_COUNT=200              # Antal stearinljus som hämtas
-ANALYSIS_TIMEFRAME=1h                  # H1 default
+# Analysis (multi-timeframe)
+ANALYSIS_INTERVAL_MINUTES=15
+ANALYSIS_CANDLE_COUNT=200
+ANALYSIS_TIMEFRAME=1h               # primary decision timeframe
+ANALYSIS_TIMEFRAMES=5m,15m,1h,4h,1d # CSV; all fed to the AI top-down
+ACTIVE_PAIRS=XAUUSD                 # Gold only for now (tier limit)
 
-# Aktiva par (kommaseparerat)
-ACTIVE_PAIRS=XAUUSD,GBPUSD,EURUSD
+# Signal lifetime (freshness + retention)
+SIGNAL_SCALP_TTL_MINUTES=240        # 4h
+SIGNAL_SWING_TTL_MINUTES=4320       # 3d
+
+# Scheduler
+SCHEDULER_ENABLED=true              # run the job on exactly one instance
+# SCHEDULER_TIMEZONE=UTC / SCHEDULER_MISFIRE_GRACE_SECONDS=60
 ```
+> **Planned variables:** `OUTCOME_INTERVAL_MINUTES` (Iteration 6),
+> `ECONOMIC_CALENDAR_ENABLED` (Iteration 9), `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
+> (Iteration 10).
 
-### Frontend (.env.local)
+### Frontend (`.env.local`)
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_APP_NAME=TradeSignal AI
+NEXT_PUBLIC_SITE_URL=http://localhost:3000   # for SEO/robots/sitemap
 ```
 
 ---
 
-## 11. Docker Compose (lokal utveckling)
+## 11. Local Run
 
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: tradesignal
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://user:password@postgres:5432/tradesignal
-    depends_on:
-      - postgres
-    volumes:
-      - ./backend:/app
-    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-volumes:
-  postgres_data:
+### Database (PostgreSQL on Windows)
+```powershell
+cd backend
+psql -U postgres -d postgres -f .\db\create_local_database.sql
+alembic upgrade head
+psql -U tradesignal_app -d tradesignal -f .\db\seed_pairs.sql
 ```
 
----
+### Backend
+```bash
+cd backend
+python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements-dev.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# API docs (dev): /api/docs, /api/redoc, /api/openapi.json
+```
 
-## 12. Installationsordning för Claude Code
+### Frontend
+```bash
+cd frontend
+npm install
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
 
-Följande ordning ska följas vid bygge:
-
-1. **Projektstruktur** — Skapa alla mappar och tomma filer enligt trädet i sektion 3
-2. **Databas** — Sätt upp PostgreSQL-anslutning, SQLAlchemy models, Alembic-migrationer
-3. **Repository-lager** — Implementera CRUD i `database/repository/`
-4. **Services** — Implementera `market_data/twelve_data.py` och `indicators/calculator.py`
-5. **AI-lager** — Implementera `ai/base.py`, `ai/groq_provider.py`, `ai/anthropic_provider.py`
-6. **Controllers** — Implementera `analysis_controller.py` och `signal_controller.py`
-7. **API-routes** — Implementera FastAPI routers i `views/`
-8. **Schemaläggning** — Sätt upp APScheduler i `tasks/analysis_job.py`
-9. **main.py** — Koppla ihop allt, starta scheduler vid app-start
-10. **Frontend** — Next.js setup, TypeScript-typer, API-service, komponenter, sidor
-11. **Docker** — Docker Compose för lokal dev
-12. **Tester** — Unit tests för controllers och services
-
----
-
-## 13. Skalbarhetsprinciper
-
-- **Provider Pattern** — Alla externa integrationer (AI, market data) implementerar en abstract base class. Ny provider = ny fil, noll kodändring i controllers.
-- **Repository Pattern** — All databaslogik isolerad i repository-lagret. Byta databas påverkar bara repository-filerna.
-- **Versionshantering av API** — Alla endpoints under `/api/v1/`. Framtida breaking changes → `/api/v2/`.
-- **Konfiguration via miljövariabler** — Inget hårdkodat. Byta AI-modell, lägga till par, ändra intervall — allt via `.env`.
-- **JSONB för AI-svar** — Hela råsvaret lagras i `raw_ai_response`. Framtida analys eller omstrukturering av data möjlig utan förlorad information.
-- **Modular frontend** — Komponenter är isolerade och återanvändbara. React Native-övergången kan återanvända logik i `services/`, `hooks/` och `types/`.
+> **Docker** (`docker-compose` for backend + postgres) is *deferred* until the
+> deploy target is settled — see backend README, Iteration 5.
 
 ---
 
-## 14. Framtida Features (ej i Fas 1)
+## 12. Scalability Principles
 
-Dessa ska inte byggas nu men arkitekturen ska inte förhindra dem:
-
-- Användarautentisering (JWT + refresh tokens)
-- Prenumerationshantering (Stripe)
-- Push-notifikationer vid ny signal
-- Backtesting-modul (validera signalkvalitet historiskt)
-- Mobilapp (React Native + Expo, delar types/ och services/)
-- Makroekonomisk kalender-integration (NFP, CPI, räntebeslut)
-- Admin-dashboard för att hantera par, signaler och analyskörningar
-- WebSocket för realtidsuppdatering av signaler i frontend
+- **Provider Pattern** — AI, market data (and planned: calendar, notifier) behind
+  abstract base classes. New provider = new file, zero change in controllers.
+- **Repository Pattern** — all database logic lives in the repository layer;
+  controllers own transaction boundaries, repos only stage work.
+- **API versioning** — everything under `/api/v1/`; breaking changes → `/api/v2/`.
+- **Configuration via environment variables** — fail-fast `Settings`; a single
+  mistyped line stops the process from starting.
+- **JSONB for the indicator snapshot** — the full indicator set is stored per signal
+  so models can be back-tested against historical inputs without re-fetching data.
+- **Modular frontend** — `services/`, `hooks/`, `types/` are isolated and reusable
+  for a future React Native app.
 
 ---
 
-*Projektbeskrivning version 1.0 — TradeSignal AI*
+## 13. Quality and Verification
+
+- **Backend:** `pytest` (274 tests green at last verification), `ruff check`/`ruff
+  format --check` clean, `pyright` (basic). Tests cover config, schemas,
+  repositories (SQL with literal binds), market data (httpx MockTransport),
+  indicators, AI providers (prompt/parse/SDK error mapping), scheduler lifecycle,
+  controllers (unit + in-memory), and routes (integration via
+  `app.dependency_overrides`).
+- **Frontend:** Vitest + React Testing Library (unit/component) and Playwright
+  (route smoke); `npm run check` runs typecheck + lint + vitest + build.
+- **Deliberately deferred:** live-Postgres round-trips and real
+  Twelve Data/Groq/Anthropic network calls are exercised via injected fakes/mocks.
+
+---
+
+## 14. Roadmap — Iterations 6-11 (backend) / 9-13 (frontend)
+
+A product review on 2026-06-03 identified the core gap: the platform *generates*
+signals but never *measures* them. The following iterations make it measurable,
+self-improving, and real-time. The full task list lives in each README.
+
+| # | Theme | Backend | Frontend | Value |
+|---|---|---|---|---|
+| 1 | **Outcome tracking** (track record) | It. 6 | It. 9 | Win-rate & R become possible — the product's credibility |
+| 2 | **Performance & calibration** | It. 7 | It. 10 | "When the AI says 80% — is it right?" Equity curve. |
+| 3 | **Smarter/cheaper AI** | It. 8 | It. 13 | Track-record feedback in the prompt, structured output, cost tracking |
+| 4 | **Macro/news awareness** | It. 9 | It. 13 | Gold is driven by USD/CPI/Fed — the AI stops trading blind |
+| 5 | **Real-time + notifications** | It. 10 | It. 11 | SSE push + Telegram — signals delivered instantly |
+| 6 | **Risk & position sizing** | It. 11 | It. 12 | "How big a position?" — turns an idea into a concrete trade |
+
+**Sequencing:** Iteration 6 (outcome tracking) is the keystone and is built first —
+Iterations 7 and 8 rest directly on its data. On a Gold-only setup it costs almost
+no extra API calls (one candle fetch per cycle).
+
+### Later phases (not in this roadmap)
+- User authentication (JWT + refresh tokens) — Phase 2
+- Subscription management (Stripe) — Phase 2
+- Backtesting module (validate signal quality historically on real data)
+- Mobile app (React Native + Expo)
+- Admin dashboard for pairs/signals/runs
+- Docker/containerization (deferred until the deploy target is settled)
+
+---
+
+*Project description version 2.0 — TradeSignal AI (updated 2026-06-03)*

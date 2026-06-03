@@ -65,7 +65,111 @@ pip install -r requirements-dev.txt
 - [x] (3) Lint and static checks
 - [ ] (2) Docker polish + runtime docs *(deferred — revisited once the deployment target is settled)*
 
-**Total: 85 points** 🚀
+**Subtotal (Iterations 1-5): 85 points — complete** 🚀
+
+---
+
+## 🗺️ Planned Work (Iterations 6-11)
+
+A product review on 2026-06-03 surfaced the core gap: the platform *generates*
+signals but never *measures* them. A signal is drafted, fed back for keep/adjust,
+then expires — nothing ever records whether price hit the take-profit or the stop.
+Without that scoreboard there is no win-rate, no calibration, and no way to prove
+the AI is any good. Iterations 6-11 turn the signal generator into a **measurable,
+self-improving, real-time** trading platform.
+
+### Captured decisions
+- **Outcome tracking is the keystone (Iteration 6) and ships first** — Iterations
+  7 and 8 build directly on the data it records.
+- **Current trading focus is XAUUSD (Gold) only.** The Twelve Data free tier's
+  per-minute limit is consumed by the multi-timeframe fetch for a single pair (see
+  the rate-limit note in project memory). The architecture stays fully multi-pair;
+  only `ACTIVE_PAIRS` is narrowed. Nothing here hard-codes Gold.
+- **Outcomes are evaluated from candles, never tick data** — one cheap fetch per
+  cycle, which fits the tier. The evaluator is a pure function so it is fully
+  back-testable without network or AI.
+- **Docker is still deferred** (Iteration 5) until the deployment target is settled.
+
+### Iteration 6 - Signal Outcome Tracking (foundation) (20 points)
+Goal: record what actually happened to every signal, so the platform has a track record.
+- [ ] (5) Migration: add to `signals` an `outcome` native enum
+  (`open|hit_tp1|hit_tp2|hit_tp3|hit_sl|expired|cancelled`), plus `closed_at`,
+  `realized_r` (`Numeric`), `mfe`/`mae` (max favourable/adverse excursion), and
+  `last_evaluated_at`. Backfill existing rows to `open`.
+- [ ] (5) `services/outcome/evaluator.py` — a **pure** `OutcomeEvaluator`: given an
+  open signal + the candles since `generated_at`, return the new outcome and the
+  realized R. Deterministic, no IO, unit-tested. Encodes the order-of-touch rule
+  (if one candle's range spans both SL and a TP, resolve conservatively to SL).
+- [ ] (4) `tasks/outcome_job.py` — a scheduled job (own cadence,
+  `OUTCOME_INTERVAL_MINUTES`) that fetches the active pair's latest candles once,
+  loads open signals, runs the evaluator, and persists outcomes in one transaction.
+  Error-isolated exactly like `AnalysisJob`. Wired into the scheduler at lifespan.
+- [ ] (3) `SignalRepository`: add `list_open`, `mark_outcome`, and an `outcome`
+  filter on `list_paginated`/`count_filtered`.
+- [ ] (3) Surface `outcome`, `realized_r`, `closed_at` on `SignalResponse`; add an
+  `?outcome=` filter to `GET /api/v1/signals`.
+
+### Iteration 7 - Performance & Calibration API (16 points)
+Goal: aggregate the outcome data into a track record the frontend can chart.
+- [ ] (5) `PerformanceController` + repo aggregations: win-rate, profit factor,
+  expectancy (avg R), total R and counts — overall and split by `signal_type`.
+- [ ] (5) Confidence calibration: bucket *closed* signals by stated confidence
+  (0-20 … 80-100) and report predicted vs realised hit-rate per bucket — the
+  "when the AI says 80%, is it right 80% of the time?" view.
+- [ ] (3) Equity-curve series: ordered cumulative `realized_r` over closed signals.
+- [ ] (3) `GET /api/v1/performance` (filters: `pair`, `signal_type`, `from`/`to`)
+  returning summary + calibration buckets + equity series, in the response envelope.
+
+### Iteration 8 - Smarter, Cheaper, More Reliable AI (18 points)
+Goal: close the learning loop and harden the model boundary.
+- [ ] (5) Feedback loop: inject a compact "recent performance on this pair/style
+  (hit-rate, avg R, confidence bias)" block into `BaseAIProvider._build_user_prompt`
+  so the model calibrates against its *own* real results, not a guess.
+- [ ] (5) Structured output: replace the regex JSON extraction with the provider's
+  native structured output (Anthropic tool-use / forced schema; Groq JSON-mode) so
+  an unparseable reply becomes near-impossible. Keep `_extract_json` as a fallback.
+- [ ] (4) Cost/usage tracking: add `prompt_tokens`, `completion_tokens`, `cost_usd`
+  to `analysis_runs`; capture them from the provider response.
+- [ ] (4) `_complete` returns a small usage result alongside the text so the
+  controller can persist usage without the view or model importing SDK types.
+
+### Iteration 9 - Macro / Economic-Calendar Awareness (16 points)
+Goal: make Gold signals aware of the news that actually moves Gold (USD, Fed, CPI).
+- [ ] (3) `EconomicCalendarProvider` ABC + one concrete provider behind a factory,
+  mirroring the `MarketDataProvider` pattern (`services/calendar/`).
+- [ ] (4) Fetch upcoming high-impact USD events (CPI, FOMC, NFP) for a window and
+  cache them (respect rate limits; one fetch per cycle, reused across the run).
+- [ ] (5) Inject an "upcoming high-impact events" block into `AnalysisContext` and
+  the prompt so the model can widen stops / lower confidence near a release.
+- [ ] (4) `GET /api/v1/calendar` endpoint for the frontend banner; guarded by an
+  `ECONOMIC_CALENDAR_ENABLED` config flag (off → behaves exactly as today).
+
+### Iteration 10 - Real-time Streaming + Notifications (20 points)
+Goal: push updates instead of being polled, and deliver signals off-platform.
+- [ ] (5) In-process event bus: the analysis and outcome jobs publish
+  `signal.created`, `signal.closed`, and `run.finished` events.
+- [ ] (5) `GET /api/v1/stream` Server-Sent Events endpoint streaming those events to
+  connected clients (keep-alive heartbeat + `Last-Event-ID` resume). SSE over
+  WebSockets because the flow is one-way server→client.
+- [ ] (4) `Notifier` ABC + `TelegramNotifier` concrete (bot token + chat id in
+  config), fired on a new high-confidence signal and on outcome close.
+- [ ] (3) Notification preferences (min confidence, styles, which events) applied
+  before dispatch.
+- [ ] (3) Config + health: a `notifications` health component reporting
+  configured/enabled/not_configured like the existing provider components.
+
+### Iteration 11 - Risk & Position Sizing (10 points)
+Goal: turn a signal into an exact, account-aware trade.
+- [ ] (4) Pure `services/risk/position_sizing.py`: given account balance, risk %,
+  entry, SL and the instrument's contract spec, compute position size, risk amount,
+  and R:R to each TP. No IO, unit-tested.
+- [ ] (3) `POST /api/v1/risk/position-size` — stateless; no account data is stored.
+- [ ] (3) Per-instrument contract metadata (pip value, min lot, contract size) for
+  XAUUSD, carried on `Pair` (or a small spec lookup).
+
+**Subtotal (Iterations 6-11): 100 points**
+
+**New Total: 185 points** 🚀
 
 ---
 

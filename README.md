@@ -27,27 +27,50 @@ TradeSignalApp/
 ```
 
 ## 🗺️ Product Roadmap
-- 🚧 Phase 1: Automated signal generation
+- ✅ Phase 1: Automated signal generation
+- 🚧 Phase 1.5: Measurable, self-improving, real-time platform — outcome tracking, performance & calibration, macro awareness, real-time + notifications, risk sizing (see **Roadmap** below)
 - 👥 Phase 2: Auth + paid subscriptions
 - 📱 Phase 3: Mobile app (React Native / Expo)
 
+## 🥇 Current Focus
+Trading focus is **XAUUSD (Gold) only** for now — the Twelve Data free tier's
+per-minute limit is consumed by the multi-timeframe fetch for a single pair. The
+architecture stays fully multi-pair; only `ACTIVE_PAIRS` is narrowed.
+
 ## 📍 Current Status
-- ✅ Frontend Iteration 1 is complete: Next.js foundation, strict TypeScript, Tailwind, typed API client, and React Query provider
-- ✅ Frontend Iteration 2 is complete: shared UI primitives, dashboard shell, signal list, signal cards, and Zustand filters
-- ✅ Frontend Iteration 3 is complete: candlestick charts, signal overlays, pair detail pages, and signal reasoning views
-- ✅ Frontend Iteration 4 is complete: validated signal filters, backend signal/pair integration, richer loading/empty/error states, responsive QA, and final cleanup
-- ✅ Frontend Iteration 5 is complete: app-wide navigation shell, dedicated dashboard/signals/analysis routes, URL-synced filters, route boundaries, breadcrumbs, and active-route highlighting
-- ✅ Backend Iteration 1 is complete: FastAPI app factory, settings, health endpoint, and response envelopes
-- ✅ Backend Iteration 2 is complete and verified: async engine/session, ORM models, Alembic migration, and repository layer
-- ✅ Backend Iteration 3 is complete and verified: Twelve Data market-data service, pure indicator calculator, Groq/Anthropic AI provider pattern, and APScheduler wiring — 208 backend tests green, ruff clean
-- ✅ Backend Iteration 4 is complete: analysis + signal controllers, signals/pairs/analysis routers, and a centralised validation/error-handling strategy — 208 backend tests green, ruff clean, OpenAPI generates cleanly
-- 🚧 Backend Iteration 5 is next: unit + integration tests, lint/static checks, and Docker/runtime polish
+- ✅ **Frontend Iterations 1-8 complete:** foundation → core UI → trading views →
+  quality/delivery → navigation & IA → real data depth → live & interactive →
+  quality & production (tests, a11y, SEO, monitoring, perf). **130 points.**
+- ✅ **Backend Iterations 1-4 complete:** core API skeleton → data layer (async ORM,
+  Alembic, repositories) → services + AI + scheduler → business logic + API
+  endpoints. **Iteration 5** (quality: unit/integration tests, lint/static checks)
+  done; Docker polish deferred until the deploy target is settled.
+- 📊 Always-on **dual-signal** engine live: every run emits a **scalp** + a **swing**
+  per pair from a **top-down multi-timeframe** read (5m → 1d), with a keep/adjust
+  feedback loop on open signals.
+- 🚧 **Next up — Phase 1.5 roadmap:** backend Iterations 6-11 / frontend 9-13. The
+  keystone is **Iteration 6 (Signal Outcome Tracking)** — the platform generates
+  signals but doesn't yet measure them.
 
 ## 🛠️ Core Stack
-- 🎨 Frontend: Next.js + React + TypeScript + Tailwind
-- ⚙️ Backend: FastAPI + SQLAlchemy + PostgreSQL + APScheduler
-- 🧠 AI: Groq (dev) / Anthropic (prod)
-- 📊 Data: Twelve Data API
+- 🎨 Frontend: Next.js 16 + React 19 + TypeScript + Tailwind 4 (Zustand, React Query, lightweight-charts)
+- ⚙️ Backend: FastAPI + SQLAlchemy 2.0 (async) + PostgreSQL 16 + APScheduler
+- 🧠 AI: Groq (dev) / Anthropic (prod) — Provider Pattern, env-switched
+- 📊 Data: Twelve Data API (multi-timeframe OHLCV)
+
+## 🧭 Roadmap (Phase 1.5)
+The signal generator becomes a measurable, self-improving, real-time platform. Full
+task lists live in `backend/README.md` (Iterations 6-11) and `frontend/README.md`
+(Iterations 9-13).
+
+| # | Theme | Backend | Frontend |
+|---|---|---|---|
+| 1 | 🎯 Outcome tracking (track record) | It. 6 | It. 9 |
+| 2 | 📊 Performance & calibration | It. 7 | It. 10 |
+| 3 | 🧠 Smarter/cheaper AI (feedback loop, structured output, cost) | It. 8 | It. 13 |
+| 4 | 📰 Macro / economic-calendar awareness | It. 9 | It. 13 |
+| 5 | ⚡ Real-time (SSE) + notifications (Telegram) | It. 10 | It. 11 |
+| 6 | 🛡️ Risk & position sizing | It. 11 | It. 12 |
 
 ## 🏁 Quick Start Order
 1. 📦 Set up backend dependencies and env
@@ -74,13 +97,13 @@ npm run dev -- --hostname 127.0.0.1 --port 3000
 ```
 
 ## 🧪 Current Verification
-- ✅ Frontend passes `npm run check` (verified 2026-05-31)
-- ✅ Frontend routes verified locally: `/`, `/pairs/XAUUSD`, `/signals/sig-xauusd-1`
-- ✅ Backend health endpoint is wired to `GET /api/v1/health`
-- ✅ Backend suite green: `pytest` → 208 passed, `ruff check`/`ruff format --check` clean (verified 2026-05-31)
-- ✅ `alembic upgrade head --sql` renders the full Iteration 2 schema (pairs, analysis_runs, signals + native enums)
-- ✅ Iteration 3 verified: market-data retries/parsing (mock transport), pure indicator snapshots, AI prompt/parse + SDK error wrapping, scheduler lifecycle, and full lifespan service wiring
-- ℹ️ Live-Postgres round-trips and real market-data/AI network calls are deferred (Iteration 5 integration suite); the scheduled job runs a placeholder until the Iteration 4 controller lands
+- ✅ Frontend passes `npm run check` (typecheck + lint + Vitest + build); Playwright route-smoke in `e2e/`
+- ✅ Frontend routes verified locally: `/`, `/dashboard`, `/signals`, `/analysis`, `/analysis/[runId]`, `/pairs/XAUUSD`, `/signals/[signalId]`
+- ✅ Backend suite green: `pytest` → 274 passed, `ruff check`/`ruff format --check` clean (verified 2026-06-02)
+- ✅ Backend health endpoint wired to `GET /api/v1/health` (reports DB, scheduler, market_data, ai_provider)
+- ✅ `alembic upgrade head --sql` renders the full schema (pairs, analysis_runs, signals + native enums)
+- ✅ Analysis pipeline live: scheduled `AnalysisJob` runs the real `AnalysisController` (no placeholder), emitting scalp + swing signals per pair
+- ℹ️ Live-Postgres round-trips and real Twelve Data/Groq/Anthropic network calls are deferred; exercised via injected fakes, `httpx.MockTransport`, and `app.dependency_overrides`
 
 ## 📚 Detailed Setup
 - 👉 Frontend plan: `frontend/README.md`

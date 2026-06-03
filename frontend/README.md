@@ -42,7 +42,7 @@ Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain
 - `any` is not allowed by ESLint (`@typescript-eslint/no-explicit-any: error`).
 - `postcss` is overridden to `8.5.14` so `npm audit --audit-level=moderate` reports no vulnerabilities.
 - Verified with `npm run check` and local route probes returning `200 OK` for `/`, `/dashboard`, `/signals`, `/analysis`, `/analysis/[runId]`, `/pairs/XAUUSD`, and `/signals/sig-xauusd-1` (and `404` for unknown routes).
-- Next up: Iteration 8 (Quality & Production: tests, a11y, SEO, monitoring, perf). See **Planned Work** below.
+- Next up: Iteration 9 (Outcome & Track Record UI). See **Planned Work (Iterations 9-13)** below.
 
 ## Setup Commands
 ```bash
@@ -177,6 +177,72 @@ Subtotal (Iterations 5-8): 70 points — **complete**
 - **Performance:** the chart is a pure %-positioned `SignalLevelMap` (no OHLCV
   feed, inherently responsive — the old `ResizeObserver` is gone), `SignalCard`
   is memoised, and list filtering is memoised.
+
+---
+
+## Planned Work (Iterations 9-13)
+
+A product review on 2026-06-03 surfaced the platform's core gap: it shows signals
+but never shows whether they *worked*. The backend roadmap (backend README,
+Iterations 6-11) adds a track record, performance analytics, real-time streaming,
+macro awareness, and risk tooling. Iterations 9-13 surface all of it in the UI.
+
+### Captured decisions
+- **Current trading focus is XAUUSD (Gold) only** (Twelve Data tier limit). The UI
+  stays pair-agnostic — nothing hard-codes Gold; the active set is driven by the
+  backend.
+- **Each frontend iteration pairs with a backend iteration** and should land after
+  (or alongside) it, since each consumes a new endpoint. The pairing is noted per
+  iteration.
+- **Auth/accounts remain Phase 2** and out of scope here. The risk calculator
+  (Iteration 12) stores account inputs only in `localStorage` — no backend account.
+
+### Iteration 9 - Outcome & Track Record UI (16 points) — pairs with backend Iteration 6
+- [ ] (4) Outcome badge on `SignalCard` + detail view (`✓ TP2 +2.1R`, `✗ SL −1R`,
+  `open`, `expired`) using the existing gold/green/red visual system
+- [ ] (4) Outcome filter (open / win / loss / expired) wired to the new `?outcome=`
+  query param with URL sync, alongside the existing direction/pair filters
+- [ ] (3) A "Closed signals" history view distinct from the active queue
+- [ ] (3) Realized-R readout + a price-vs-SL/TP progress indicator on the
+  `SignalLevelMap`
+- [ ] (2) Extend the `Signal` type with `outcome`/`realizedR`/`closedAt`; update
+  `signalMappers`, fixtures, and their tests
+
+### Iteration 10 - Performance Dashboard (18 points) — pairs with backend Iteration 7
+- [ ] (5) New `/performance` route + nav entry + breadcrumb
+- [ ] (5) Equity-curve chart (cumulative R over closed signals) via `lightweight-charts`
+- [ ] (4) Confidence-calibration chart (predicted vs realised hit-rate per bucket) —
+  the standout, "is the AI honest?" view
+- [ ] (3) KPI cards: win-rate, profit factor, expectancy, total R — split scalp/swing
+- [ ] (1) `usePerformanceQuery` hook + `performanceService` + types
+
+### Iteration 11 - Live (SSE) & Notifications (16 points) — pairs with backend Iteration 10
+- [ ] (5) `useEventStream` hook subscribing to `/stream` (`EventSource`) that
+  patches/invalidates the React Query cache so cards update live with no refresh
+- [ ] (4) Upgrade the notification bell + toast to fire from real stream events
+  (new signal, TP/SL hit) with a subtle update animation
+- [ ] (4) Notification settings panel (min confidence, styles, channels), persisted
+  and synced to backend preferences
+- [ ] (3) Telegram connect helper (bot link / chat-id field) + connection status
+
+### Iteration 12 - Risk & Position-Size Calculator (12 points) — pairs with backend Iteration 11
+- [ ] (4) Account inputs (balance, risk %) in a Zustand store persisted to `localStorage`
+- [ ] (4) Position-size widget on `SignalCard` + detail: lot size, risk $, and R:R
+  per TP, via `POST /risk/position-size`
+- [ ] (2) `react-hook-form` + `zod` validation on the account inputs
+- [ ] (2) Tests for the sizing display + the persisted store
+
+### Iteration 13 - Macro Awareness & AI Transparency (14 points) — pairs with backend Iterations 8 & 9
+- [ ] (4) Dismissible economic-calendar banner ("⚠️ High-impact USD event in 2h:
+  CPI") sourced from `/calendar`
+- [ ] (3) A per-day event strip on the dashboard
+- [ ] (4) AI transparency: model, token usage, and `cost_usd` per run on the analysis
+  detail; a "calibrated vs raw confidence" hint on cards
+- [ ] (3) Tests + accessibility pass on the new surfaces
+
+Subtotal (Iterations 9-13): 76 points
+
+**New Total: 206 points** 🚀
 
 ## Run
 ```bash
