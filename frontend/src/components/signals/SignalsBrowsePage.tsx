@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { RefreshCw, X } from "lucide-react";
@@ -18,6 +18,10 @@ import { refineSignals } from "@/lib/signalFilters";
 import { signals as mockSignals, tradingPairs } from "@/lib/mockSignals";
 import { useSignalStore } from "@/store/signalStore";
 import { useUIStore } from "@/store/uiStore";
+import type { Signal } from "@/types/signal";
+
+const emptySignals: Signal[] = [];
+const subscribeToHydration = () => () => undefined;
 
 export function SignalsBrowsePage() {
   const searchParams = useSearchParams();
@@ -34,10 +38,16 @@ export function SignalsBrowsePage() {
   const sort = useSignalStore((state) => state.sort);
   const reset = useSignalStore((state) => state.reset);
   const density = useUIStore((state) => state.density);
+  const hasMounted = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false
+  );
 
-  const hasLiveData = query.isSuccess && query.signals.length >= 0 && !query.isError;
-  const pairs = query.pairs.length > 0 ? query.pairs : tradingPairs;
-  const sourceSignals = query.isError ? mockSignals : query.signals;
+  const isQueryError = hasMounted && query.isError;
+  const hasLiveData = hasMounted && query.isSuccess && query.signals.length >= 0 && !query.isError;
+  const pairs = hasMounted && query.pairs.length > 0 ? query.pairs : tradingPairs;
+  const sourceSignals = isQueryError ? mockSignals : hasMounted ? query.signals : emptySignals;
 
   // The pair filter is enforced server-side, so it's a no-op refinement here;
   // direction/style/status/sort are applied client-side over the loaded pages.
@@ -46,7 +56,7 @@ export function SignalsBrowsePage() {
     [sourceSignals, direction, tradeStyle, status, storePair, sort]
   );
 
-  const isInitialLoading = query.isLoading && !query.isError;
+  const isInitialLoading = !hasMounted || (query.isLoading && !query.isError);
 
   return (
     <section className="space-y-5">
@@ -64,7 +74,7 @@ export function SignalsBrowsePage() {
             </p>
           ) : null}
         </div>
-        <Button disabled={query.isFetching} onClick={() => void query.refetch()} variant="primary">
+        <Button disabled={!hasMounted || query.isFetching} onClick={() => void query.refetch()} variant="primary">
           <RefreshCw className="h-4 w-4" />
           Refresh
         </Button>
@@ -84,7 +94,7 @@ export function SignalsBrowsePage() {
         </div>
       ) : null}
 
-      {query.isError ? (
+      {isQueryError ? (
         <ErrorState
           error={query.error as Error}
           onRetry={() => void query.refetch()}

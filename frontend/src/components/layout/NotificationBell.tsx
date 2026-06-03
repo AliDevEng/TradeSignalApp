@@ -78,13 +78,13 @@ export function NotificationBell() {
   }, [open]);
 
   function toggle() {
-    setOpen((value) => {
-      const next = !value;
-      if (next && unreadCount > 0) {
-        markAllRead();
-      }
-      return next;
-    });
+    const shouldMarkRead = !open && unreadCount > 0;
+
+    setOpen((value) => !value);
+
+    if (shouldMarkRead) {
+      markAllRead();
+    }
   }
 
   return (

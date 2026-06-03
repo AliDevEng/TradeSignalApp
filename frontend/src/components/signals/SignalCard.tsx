@@ -23,15 +23,15 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
     <Card className="overflow-hidden transition-colors hover:border-[#6f5620]">
       <div
         className={cn(
-          "grid gap-5 p-5",
-          isCompact ? "lg:grid-cols-[1fr_1.2fr]" : "lg:grid-cols-[1fr_1.4fr]"
+          "grid items-start gap-5 p-5",
+          isCompact ? "lg:grid-cols-[minmax(0,1fr)_360px]" : "lg:grid-cols-[minmax(0,1fr)_470px]"
         )}
       >
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col justify-between gap-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-xl font-semibold text-[#fff8df]">{signal.symbol}</h3>
+                <h3 className="text-2xl font-semibold text-[#fff8df]">{signal.symbol}</h3>
                 <SignalBadge direction={signal.direction} />
                 <TradeStyleBadge tradeStyle={signal.tradeStyle} />
                 <SignalStatusBadge status={signal.status} />
@@ -46,66 +46,13 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
             </Link>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-md border border-[#2a3445] bg-[#0e141e] px-3 py-2">
-              <p className="text-xs font-medium text-[var(--muted)]">Confidence</p>
-              <p className="mt-1 text-lg font-semibold text-[var(--gold-strong)]">
-                {formatPercent(signal.confidence)}
-              </p>
-            </div>
-            <div className="rounded-md border border-[#2a3445] bg-[#0e141e] px-3 py-2">
-              <p className="text-xs font-medium text-[var(--muted)]">R:R</p>
-              <p className="mt-1 text-lg font-semibold text-[var(--blue-strong)]">
-                {signal.riskReward ? `${signal.riskReward.toFixed(2)} : 1` : "Hold"}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-md border border-[#334056] bg-[#0d131c] p-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                <Target className="h-3.5 w-3.5 text-[var(--gold)]" />
-                Entry
-              </div>
-              <p className="mt-2 text-lg font-semibold text-[#fff8df]">
-                {formatPrice(signal.entryPrice, precision)}
-              </p>
-            </div>
-            <div className="rounded-md border border-[#4c2027] bg-[var(--red-soft)] p-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                <ShieldCheck className="h-3.5 w-3.5 text-[var(--red-strong)]" />
-                Stop
-              </div>
-              <p className="mt-2 text-lg font-semibold text-[#fff8df]">
-                {signal.stopLoss ? formatPrice(signal.stopLoss, precision) : "Pending"}
-              </p>
-            </div>
-            <div className="rounded-md border border-[#244d7d] bg-[var(--blue-soft)] p-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                <Brain className="h-3.5 w-3.5 text-[var(--blue-strong)]" />
-                Targets
-              </div>
-              {signal.targets.length > 0 ? (
-                <ul className="mt-2 space-y-1">
-                  {signal.targets.map((target) => (
-                    <li key={target.label} className="flex items-baseline justify-between gap-2">
-                      <span className="text-xs font-medium text-[var(--muted)]">{target.label}</span>
-                      <span className="text-sm font-semibold text-[#fff8df]">
-                        {formatPrice(target.price, precision)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-2 text-lg font-semibold text-[#fff8df]">Pending</p>
-              )}
-            </div>
-          </div>
-
           {!isCompact ? (
-            <p className="text-sm leading-6 text-[#b8c2d0]">{signal.rationale}</p>
+            <div className="max-w-3xl">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                Analysis
+              </p>
+              <p className="mt-2 text-sm leading-7 text-[#c7d1df]">{signal.rationale}</p>
+            </div>
           ) : null}
 
           <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-[var(--muted)]">
@@ -123,6 +70,74 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
             >
               Review signal
             </Link>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[#263247] bg-[#0b111a] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-md border border-[#2a3445] bg-[#101722] px-3 py-2.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                Confidence
+              </p>
+              <p className="mt-1 text-xl font-semibold text-[var(--gold-strong)]">
+                {formatPercent(signal.confidence)}
+              </p>
+            </div>
+            <div className="rounded-md border border-[#2a3445] bg-[#101722] px-3 py-2.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                R:R
+              </p>
+              <p className="mt-1 text-xl font-semibold text-[var(--blue-strong)]">
+                {signal.riskReward ? `${signal.riskReward.toFixed(2)} : 1` : "Hold"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-md border border-[#4a3d20] bg-[#151207] px-3 py-3">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                <Target className="h-3.5 w-3.5 text-[var(--gold)]" />
+                Entry
+              </div>
+              <p className="mt-2 text-2xl font-semibold leading-none text-[#fff8df]">
+                {formatPrice(signal.entryPrice, precision)}
+              </p>
+            </div>
+            <div className="rounded-md border border-[#5a242b] bg-[var(--red-soft)] px-3 py-3">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                <ShieldCheck className="h-3.5 w-3.5 text-[var(--red-strong)]" />
+                Stop
+              </div>
+              <p className="mt-2 text-2xl font-semibold leading-none text-[#ffdfdf]">
+                {signal.stopLoss ? formatPrice(signal.stopLoss, precision) : "Pending"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-2 rounded-md border border-[#1f6f49] bg-[#092016] px-3 py-3">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+              <Brain className="h-3.5 w-3.5 text-[#65d98d]" />
+              Targets
+            </div>
+            {signal.targets.length > 0 ? (
+              <ul className="mt-3 grid gap-2">
+                {signal.targets.map((target) => (
+                  <li
+                    key={target.label}
+                    className="flex items-center justify-between gap-3 rounded-md bg-[#0d2a1b] px-3 py-2"
+                  >
+                    <span className="text-xs font-semibold uppercase tracking-wide text-[#b9d8c0]">
+                      {target.label}
+                    </span>
+                    <span className="text-base font-semibold text-[#7bea9b]">
+                      {formatPrice(target.price, precision)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-lg font-semibold text-[#7bea9b]">Pending</p>
+            )}
           </div>
         </div>
       </div>

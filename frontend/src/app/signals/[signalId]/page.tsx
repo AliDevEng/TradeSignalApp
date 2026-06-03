@@ -37,6 +37,8 @@ type SignalDetailPageProps = {
   }>;
 };
 
+const showReferencePanels = false;
+
 export const metadata: Metadata = {
   title: "Signal detail",
   description:
@@ -82,7 +84,7 @@ export default async function SignalDetailPage({ params }: SignalDetailPageProps
 
       <SignalSummaryPanel signal={signal} />
 
-      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
+      <div hidden={!showReferencePanels}>
         <div className="space-y-6">
           <SignalLevelMap
             signal={signal}
@@ -91,97 +93,93 @@ export default async function SignalDetailPage({ params }: SignalDetailPageProps
           />
 
           <IndicatorsPanel indicators={signal.indicators} />
-
-          <ReasoningPanel reasoning={signal.reasoning} />
         </div>
+      </div>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Radar className="h-4 w-4 text-[var(--gold)]" />
-                <h2 className="text-lg font-semibold text-[#fff8df]">Execution Brief</h2>
-              </div>
-              <p className="text-sm leading-6 text-[var(--muted)]">
-                Keep the trade plan readable at a glance: where the setup starts,
-                where it fails, and how profit is distributed.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <ContextMetric
-                  icon={Clock3}
-                  label="Timeframe"
-                  value={signal.timeframe.toUpperCase()}
-                />
-                <ContextMetric
-                  icon={TrendingUp}
-                  label="Risk / Reward"
-                  value={signal.riskReward !== null ? signal.riskReward.toFixed(2) : "Pending"}
-                />
-                <ContextMetric
-                  icon={CalendarClock}
-                  label="Generated"
-                  value={formatDateTime(signal.generatedAt)}
-                />
-                <ContextMetric
-                  icon={Bot}
-                  label="AI provider"
-                  value={signal.aiProvider ?? "Unknown"}
-                />
-                <ContextMetric icon={Cpu} label="AI model" value={signal.aiModel ?? "Unknown"} />
-                <div className="rounded-lg border border-[var(--panel-border)] bg-[#101722] px-4 py-3">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                    <ShieldCheck className="h-4 w-4 text-[var(--gold)]" />
-                    Freshness
-                  </div>
-                  <div className="mt-2">
-                    <ExpiryBadge expiresAt={signal.expiresAt} />
-                  </div>
+      <div className="grid items-start gap-6 xl:grid-cols-[0.9fr_1.35fr]">
+        <Card>
+          <CardHeader className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Radar className="h-4 w-4 text-[var(--gold)]" />
+              <h2 className="text-lg font-semibold text-[#fff8df]">Execution Brief</h2>
+            </div>
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              Keep the trade plan readable at a glance: where the setup starts, where it fails,
+              and how profit is distributed.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+              <ContextMetric
+                icon={Clock3}
+                label="Timeframe"
+                value={signal.timeframe.toUpperCase()}
+              />
+              <ContextMetric
+                icon={TrendingUp}
+                label="Risk / Reward"
+                value={signal.riskReward !== null ? signal.riskReward.toFixed(2) : "Pending"}
+              />
+              <ContextMetric
+                icon={CalendarClock}
+                label="Generated"
+                value={formatDateTime(signal.generatedAt)}
+              />
+              <ContextMetric icon={Bot} label="AI provider" value={signal.aiProvider ?? "Unknown"} />
+              <ContextMetric icon={Cpu} label="AI model" value={signal.aiModel ?? "Unknown"} />
+              <div className="rounded-lg border border-[var(--panel-border)] bg-[#101722] px-4 py-3">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  <ShieldCheck className="h-4 w-4 text-[var(--gold)]" />
+                  Freshness
+                </div>
+                <div className="mt-2">
+                  <ExpiryBadge expiresAt={signal.expiresAt} />
                 </div>
               </div>
+            </div>
 
-              <div className="rounded-lg border border-[var(--panel-border)] bg-[#0d131c] p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
-                    Target Ladder
-                  </h3>
-                  <Badge tone="info">{signal.targets.length} levels</Badge>
-                </div>
-                <div className="mt-4 space-y-3">
-                  <PriceLevel
-                    emphasis="entry"
-                    label="Entry"
-                    value={formatPrice(signal.entryPrice, precision)}
-                  />
-                  <PriceLevel
-                    distance={signal.stopDistancePercent}
-                    emphasis="stop"
-                    label="Stop Loss"
-                    value={
-                      signal.stopLoss !== null ? formatPrice(signal.stopLoss, precision) : "Pending"
-                    }
-                  />
-                  {signal.targets.length > 0 ? (
-                    signal.targets.map((target) => (
-                      <PriceLevel
-                        distance={target.distancePercent}
-                        emphasis="target"
-                        key={target.label}
-                        label={target.label}
-                        value={formatPrice(target.price, precision)}
-                      />
-                    ))
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-[#45536a] bg-[#101722] px-4 py-5 text-sm text-[var(--muted)]">
-                      No target ladder is defined yet for this signal.
-                    </div>
-                  )}
-                </div>
+            <div className="rounded-lg border border-[var(--panel-border)] bg-[#0d131c] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Target Ladder
+                </h3>
+                <Badge tone="info">{signal.targets.length} levels</Badge>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+              <div className="mt-4 space-y-3">
+                <PriceLevel
+                  emphasis="entry"
+                  label="Entry"
+                  value={formatPrice(signal.entryPrice, precision)}
+                />
+                <PriceLevel
+                  distance={signal.stopDistancePercent}
+                  emphasis="stop"
+                  label="Stop Loss"
+                  value={
+                    signal.stopLoss !== null ? formatPrice(signal.stopLoss, precision) : "Pending"
+                  }
+                />
+                {signal.targets.length > 0 ? (
+                  signal.targets.map((target) => (
+                    <PriceLevel
+                      distance={target.distancePercent}
+                      emphasis="target"
+                      key={target.label}
+                      label={target.label}
+                      value={formatPrice(target.price, precision)}
+                    />
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-[#45536a] bg-[#101722] px-4 py-5 text-sm text-[var(--muted)]">
+                    No target ladder is defined yet for this signal.
+                  </div>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <ReasoningPanel reasoning={signal.reasoning} />
       </div>
     </div>
   );
