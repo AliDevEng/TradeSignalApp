@@ -153,35 +153,68 @@ def test_invalid_timeframe_rejected():
         Settings(**_base_env({"analysis_timeframe": "2h"}), _env_file=None)
 
 
-# ── analysis_timeframes parsing/validation ──────────────────────────────────
+# ── per-style timeframes + union property ───────────────────────────────────
 
 
-def test_analysis_timeframes_default():
+def test_style_timeframe_defaults():
+    s = Settings(**_base_env(), _env_file=None)
+    assert s.scalp_timeframes == ["5m", "15m", "1h", "4h"]
+    assert s.swing_timeframes == ["4h", "1d"]
+
+
+def test_analysis_timeframes_is_ordered_unique_union():
+    # Union of the two style sets, ordered low→high, with the shared 4h once.
     s = Settings(**_base_env(), _env_file=None)
     assert s.analysis_timeframes == ["5m", "15m", "1h", "4h", "1d"]
 
 
-def test_analysis_timeframes_parses_csv_and_lowercases():
-    s = Settings(**_base_env({"analysis_timeframes": "1D, 4H , 1h"}), _env_file=None)
-    assert s.analysis_timeframes == ["1d", "4h", "1h"]
-
-
-def test_analysis_timeframes_dedupes():
-    s = Settings(**_base_env({"analysis_timeframes": "1h,1h,4h"}), _env_file=None)
-    assert s.analysis_timeframes == ["1h", "4h"]
-
-
-def test_analysis_timeframes_rejects_unknown():
-    with pytest.raises(ValidationError):
-        Settings(**_base_env({"analysis_timeframes": "1h,2h"}), _env_file=None)
-
-
-def test_primary_timeframe_appended_when_missing():
+def test_style_timeframes_parse_csv_and_lowercase():
+    # Pin the primary into the scalp set so it isn't auto-appended here.
     s = Settings(
-        **_base_env({"analysis_timeframe": "1h", "analysis_timeframes": "4h,1d"}),
+        **_base_env(
+            {
+                "analysis_timeframe": "5m",
+                "scalp_timeframes": "5M, 15m ",
+                "swing_timeframes": "4H,1D",
+            }
+        ),
+        _env_file=None,
+    )
+    assert s.scalp_timeframes == ["5m", "15m"]
+    assert s.swing_timeframes == ["4h", "1d"]
+
+
+def test_style_timeframes_dedupe():
+    s = Settings(**_base_env({"scalp_timeframes": "1h,1h,4h"}), _env_file=None)
+    assert s.scalp_timeframes == ["1h", "4h"]
+
+
+def test_style_timeframes_reject_unknown():
+    with pytest.raises(ValidationError):
+        Settings(**_base_env({"scalp_timeframes": "1h,2h"}), _env_file=None)
+
+
+def test_union_dedupes_overlap_and_orders_across_styles():
+    s = Settings(
+        **_base_env({"scalp_timeframes": "1h,5m", "swing_timeframes": "1h,1d"}),
+        _env_file=None,
+    )
+    assert s.analysis_timeframes == ["5m", "1h", "1d"]
+
+
+def test_primary_timeframe_appended_to_scalp_when_missing():
+    s = Settings(
+        **_base_env(
+            {
+                "analysis_timeframe": "1h",
+                "scalp_timeframes": "5m,15m",
+                "swing_timeframes": "4h,1d",
+            }
+        ),
         _env_file=None,
     )
     assert "1h" in s.analysis_timeframes
+    assert "1h" in s.scalp_timeframes
 
 
 def test_invalid_interval_rejected():

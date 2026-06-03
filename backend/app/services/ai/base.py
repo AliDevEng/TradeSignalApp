@@ -127,6 +127,11 @@ class AnalysisContext:
     ``current_scalp`` / ``current_swing`` are the pair's currently-open signals
     (if any) of each style, fed back so the model keeps or adjusts them.
 
+    ``scalp_timeframes`` / ``swing_timeframes`` are the timeframes each style is
+    *framed* on. They label the evidence (every ``view`` is still provided to
+    the model, but the prompt tells it which frames anchor the scalp's levels
+    and which anchor the swing's). Empty tuples leave the blocks unlabelled.
+
     Frozen so a provider can't accidentally mutate shared inputs when the
     same context is (in future) fanned out to multiple models for comparison.
     """
@@ -136,6 +141,8 @@ class AnalysisContext:
     views: tuple[TimeframeView, ...]
     current_scalp: PriorSignal | None = None
     current_swing: PriorSignal | None = None
+    scalp_timeframes: tuple[str, ...] = ()
+    swing_timeframes: tuple[str, ...] = ()
 
 
 class SignalDraft(BaseModel):
@@ -292,30 +299,74 @@ class BaseAIProvider(AIProvider):
             key=lambda v: _TIMEFRAME_MINUTES.get(v.timeframe, 0),
             reverse=True,
         )
+        scalp_set = set(context.scalp_timeframes)
+        swing_set = set(context.swing_timeframes)
         blocks = []
         for view in views:
             ind = self._round_indicators(view.indicators.model_dump(mode="json"))
             candles = self._render_candles(view.recent_candles)
+            role = self._frame_role(view.timeframe, scalp_set, swing_set)
             primary = (
                 " — PRIMARY / decision timeframe"
                 if (view.timeframe == context.primary_timeframe)
                 else ""
             )
             blocks.append(
-                f"=== Timeframe: {view.timeframe}{primary} ===\n"
+                f"=== Timeframe: {view.timeframe}{role}{primary} ===\n"
                 f"Indicators (latest):\n{json.dumps(ind, indent=2, default=str)}\n\n"
                 f"Recent candles (oldest first, up to {_PROMPT_CANDLE_WINDOW}):\n{candles}"
             )
         order = ", ".join(v.timeframe for v in views)
+        framing = self._render_framing(context)
         prior = self._render_prior_signals(context)
         return (
             f"Instrument: {context.symbol}\n"
             f"Primary (decision) timeframe: {context.primary_timeframe}\n"
-            f"Timeframes provided (high → low): {order}\n\n"
+            f"Timeframes provided (high → low): {order}\n"
+            + framing
+            + "\n\n"
             + "\n\n".join(blocks)
             + f"\n\n{prior}"
             + "\n\nPerform a top-down multi-timeframe analysis and return the JSON "
             "object with both a scalp and a swing signal now."
+        )
+
+    @staticmethod
+    def _frame_role(timeframe: str, scalp_set: set[str], swing_set: set[str]) -> str:
+        """Tag a timeframe block with the style(s) it frames.
+
+        Returns an empty string when no frame sets were supplied (so the prompt
+        is unchanged for callers that don't label frames, e.g. older tests).
+        """
+        in_scalp = timeframe in scalp_set
+        in_swing = timeframe in swing_set
+        if not scalp_set and not swing_set:
+            return ""
+        if in_scalp and in_swing:
+            return " [SCALP+SWING frame]"
+        if in_scalp:
+            return " [SCALP frame]"
+        if in_swing:
+            return " [SWING frame]"
+        return " [context only]"
+
+    @staticmethod
+    def _render_framing(context: AnalysisContext) -> str:
+        """One line telling the model which frames anchor each style's levels.
+
+        Omitted entirely when no frame sets were supplied, so the prompt stays
+        identical for unlabelled callers.
+        """
+        if not context.scalp_timeframes and not context.swing_timeframes:
+            return ""
+        scalp = ", ".join(context.scalp_timeframes) or "(none)"
+        swing = ", ".join(context.swing_timeframes) or "(none)"
+        return (
+            f"\nScalp frame: {scalp} | Swing frame: {swing}\n"
+            "Frame the SCALP's entry/stop/targets on the scalp-frame timeframes "
+            "and the SWING's on the swing-frame timeframes. You may read every "
+            "timeframe for directional bias, but anchor each style's levels to "
+            "its own frame."
         )
 
     @staticmethod

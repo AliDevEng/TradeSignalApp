@@ -2,13 +2,25 @@ from functools import lru_cache
 from typing import Annotated, Literal
 
 from fastapi import Depends
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["development", "staging", "production", "test"]
 AIProvider = Literal["groq", "anthropic"]
 MarketDataProvider = Literal["twelve_data"]
 Timeframe = Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+
+# Relative magnitude of each timeframe, used to order the per-style frames
+# low→high when computing their union.
+_TIMEFRAME_MINUTES: dict[str, int] = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+}
 
 
 class Settings(BaseSettings):
@@ -75,16 +87,21 @@ class Settings(BaseSettings):
     analysis_interval_minutes: int = Field(default=15, ge=1, le=1440)
     analysis_candle_count: int = Field(default=200, ge=20, le=5000)
     # The primary (decision) timeframe: the one a generated signal is framed on
-    # and recorded against. Must be one of ``analysis_timeframes``.
+    # and recorded against. Must be one of the analysed timeframes (the union of
+    # the per-style frames below); appended automatically if omitted from both.
     analysis_timeframe: Timeframe = "1h"
-    # Every timeframe fed to the AI for a top-down, multi-timeframe read. The
-    # model sees them highest→lowest (daily trend → intraday entry). Each one
-    # costs a market-data call per pair per run, so the count is the main lever
-    # on provider cost/rate-limits. Comma-separated in .env
-    # (ANALYSIS_TIMEFRAMES=5m,15m,1h,4h,1d).
-    analysis_timeframes: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["5m", "15m", "1h", "4h", "1d"]
+    # Per-style timeframe frames. Each signal style is framed on — and the model
+    # is shown — its own set: the scalp leans on fast timeframes (tight stop,
+    # near targets), the swing on slow ones (wide stop, extended targets). The
+    # *union* of the two (see the ``analysis_timeframes`` property) is what gets
+    # fetched per run, so overlapping a timeframe across styles costs nothing
+    # extra. Each timeframe in the union costs at most one market-data call per
+    # pair per run (slow ones are served from the candle cache between bars).
+    # Comma-separated in .env (SCALP_TIMEFRAMES=5m,15m,1h,4h / SWING_TIMEFRAMES=4h,1d).
+    scalp_timeframes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["5m", "15m", "1h", "4h"]
     )
+    swing_timeframes: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["4h", "1d"])
 
     # ── Signal lifetime ────────────────────────────────────────────────────
     # How long each style's signal stays "fresh" before ``expires_at`` lapses.
@@ -111,7 +128,13 @@ class Settings(BaseSettings):
         default_factory=lambda: ["XAUUSD", "GBPUSD", "EURUSD"]
     )
 
-    @field_validator("active_pairs", "cors_allowed_origins", "analysis_timeframes", mode="before")
+    @field_validator(
+        "active_pairs",
+        "cors_allowed_origins",
+        "scalp_timeframes",
+        "swing_timeframes",
+        mode="before",
+    )
     @classmethod
     def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):
@@ -125,10 +148,10 @@ class Settings(BaseSettings):
             raise ValueError("active_pairs must contain at least one trading pair")
         return [p.upper() for p in value]
 
-    @field_validator("analysis_timeframes")
+    @field_validator("scalp_timeframes", "swing_timeframes")
     @classmethod
-    def _validate_timeframes(cls, value: list[str]) -> list[str]:
-        """Normalise, validate, and de-duplicate the multi-timeframe list.
+    def _validate_timeframes(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        """Normalise, validate, and de-duplicate one per-style timeframe list.
 
         Each entry must be a supported ``Timeframe`` literal; an unknown value
         is a configuration error (the market-data provider would reject it
@@ -137,7 +160,7 @@ class Settings(BaseSettings):
         allowed = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
         normalised = [tf.strip().lower() for tf in value]
         if not normalised:
-            raise ValueError("analysis_timeframes must contain at least one timeframe")
+            raise ValueError(f"{info.field_name} must contain at least one timeframe")
         deduped: list[str] = []
         for tf in normalised:
             if tf not in allowed:
@@ -147,16 +170,32 @@ class Settings(BaseSettings):
         return deduped
 
     @model_validator(mode="after")
-    def _primary_timeframe_in_set(self) -> "Settings":
+    def _primary_timeframe_in_frames(self) -> "Settings":
         """The decision timeframe must be one of the analysed timeframes.
 
         Otherwise a signal would be recorded against a timeframe the model was
-        never shown — append it rather than reject, so a minimal config
-        (just ``analysis_timeframe``) still works without listing it twice.
+        never shown. Append it to the scalp frame rather than reject, so a
+        minimal config still works without listing it in either set.
         """
-        if self.analysis_timeframe not in self.analysis_timeframes:
-            self.analysis_timeframes = [*self.analysis_timeframes, self.analysis_timeframe]
+        if self.analysis_timeframe not in (*self.scalp_timeframes, *self.swing_timeframes):
+            self.scalp_timeframes = [*self.scalp_timeframes, self.analysis_timeframe]
         return self
+
+    @property
+    def analysis_timeframes(self) -> list[str]:
+        """Ordered-unique union of the per-style frames — the set fetched per run.
+
+        Ordered low→high (by bar duration) so the fetch order and the run ledger
+        read naturally; presentation order (e.g. high→low for the prompt) is the
+        caller's concern. Computed, not stored, so the two style lists stay the
+        single source of truth.
+        """
+        merged = [*self.scalp_timeframes, *self.swing_timeframes]
+        union: list[str] = []
+        for tf in sorted(merged, key=lambda t: _TIMEFRAME_MINUTES.get(t, 0)):
+            if tf not in union:
+                union.append(tf)
+        return union
 
     @property
     def is_development(self) -> bool:

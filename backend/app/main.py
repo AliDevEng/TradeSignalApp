@@ -20,7 +20,11 @@ from app.database import Database
 from app.error_handlers import register_exception_handlers
 from app.logging_config import configure_logging
 from app.services.ai import AIProvider, build_ai_provider
-from app.services.market_data import MarketDataProvider, build_market_data_provider
+from app.services.market_data import (
+    CachingMarketDataProvider,
+    MarketDataProvider,
+    build_market_data_provider,
+)
 from app.tasks import AnalysisJob, Scheduler
 from app.views import api_v1_router
 
@@ -57,7 +61,14 @@ async def lifespan(app: FastAPI):
     # External clients live for the serving lifetime — constructed here (not in
     # create_app) so that lightweight unit tests, which build an app without
     # entering the lifespan, never spin up real SDK/HTTP clients.
-    market_data: MarketDataProvider = build_market_data_provider(settings)
+    #
+    # The market-data provider is wrapped in a TTL cache so slow timeframes
+    # (4h/1d) are not re-fetched every cycle — the dominant cost against the
+    # provider's per-minute budget. The cache is itself a MarketDataProvider, so
+    # the controller is unchanged; ``aclose`` delegates to the wrapped vendor.
+    market_data: MarketDataProvider = CachingMarketDataProvider(
+        build_market_data_provider(settings)
+    )
     ai_provider: AIProvider = build_ai_provider(settings)
     scheduler = Scheduler(
         timezone=settings.scheduler_timezone,

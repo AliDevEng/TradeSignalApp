@@ -158,6 +158,48 @@ async def test_user_prompt_renders_all_timeframes_high_to_low():
     assert user.index("Timeframe: 1d") < user.index("Timeframe: 5m")
 
 
+async def test_user_prompt_labels_scalp_and_swing_frames():
+    candle = Candle(
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+        open=Decimal("1.10"),
+        high=Decimal("1.12"),
+        low=Decimal("1.09"),
+        close=Decimal("1.11"),
+    )
+    snap = IndicatorSnapshot()
+    context = AnalysisContext(
+        symbol="XAUUSD",
+        primary_timeframe="1h",
+        views=(
+            TimeframeView(timeframe="5m", indicators=snap, recent_candles=[candle]),
+            TimeframeView(timeframe="4h", indicators=snap, recent_candles=[candle]),
+            TimeframeView(timeframe="1d", indicators=snap, recent_candles=[candle]),
+        ),
+        scalp_timeframes=("5m", "4h"),
+        swing_timeframes=("4h", "1d"),
+    )
+    provider = _FakeProvider(_VALID_DUAL)
+    await provider.analyze(context)
+
+    user = provider.user
+    # Each block carries its role; the shared 4h is tagged for both styles.
+    assert "Timeframe: 5m [SCALP frame]" in user
+    assert "Timeframe: 4h [SCALP+SWING frame]" in user
+    assert "Timeframe: 1d [SWING frame]" in user
+    # And the framing instruction lists each style's frame set.
+    assert "Scalp frame: 5m, 4h" in user
+    assert "Swing frame: 4h, 1d" in user
+
+
+async def test_user_prompt_omits_frame_labels_when_unset():
+    # No frame sets supplied → blocks stay unlabelled and no framing line appears.
+    provider = _FakeProvider(_VALID_DUAL)
+    await provider.analyze(_context())
+
+    assert "[SCALP frame]" not in provider.user
+    assert "Scalp frame:" not in provider.user
+
+
 async def test_analyze_rejects_signal_without_entry():
     # The swing draft is directional but carries no entry — must be rejected.
     reply = (

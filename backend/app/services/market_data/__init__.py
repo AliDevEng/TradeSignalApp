@@ -20,12 +20,14 @@ from app.services.market_data.base import (
     RateLimitError,
     SymbolNotFoundError,
 )
+from app.services.market_data.cache import CachingMarketDataProvider
 from app.services.market_data.twelve_data import TwelveDataProvider
 
 if TYPE_CHECKING:
     from app.config import Settings
 
 __all__ = [
+    "CachingMarketDataProvider",
     "Candle",
     "MarketDataError",
     "MarketDataParseError",

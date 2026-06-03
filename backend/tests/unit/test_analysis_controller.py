@@ -194,10 +194,24 @@ def _patch_repositories(monkeypatch):
     monkeypatch.setattr(ac, "SignalRepository", _FakeSignalRepo)
 
 
-def _build(store: Store, *, market_data=None, ai=None, timeframes=None) -> AnalysisController:
+def _build(
+    store: Store,
+    *,
+    market_data=None,
+    ai=None,
+    timeframes=None,
+    scalp=None,
+    swing=None,
+) -> AnalysisController:
+    # ``timeframes`` is the union fetched per run; the per-style frames default
+    # to that whole set unless overridden, so scalp frames on its lowest member
+    # and swing on its highest.
+    tfs = timeframes or ["1h"]
     settings = SimpleNamespace(
         analysis_timeframe="1h",
-        analysis_timeframes=timeframes or ["1h"],
+        analysis_timeframes=tfs,
+        scalp_timeframes=scalp or tfs,
+        swing_timeframes=swing or tfs,
         analysis_candle_count=200,
         signal_scalp_ttl_minutes=240,
         signal_swing_ttl_minutes=4320,

@@ -211,19 +211,25 @@ class AnalysisController:
         # rewrite what a historical run actually executed.
         #
         # ``_timeframe`` is the primary (decision) timeframe a signal is framed
-        # on; ``_timeframes`` is the full set fed to the AI for a top-down,
-        # multi-timeframe read. Each timeframe costs one market-data call per
-        # pair per run.
+        # on; ``_timeframes`` is the full set fetched and fed to the AI for a
+        # top-down, multi-timeframe read — the union of the two per-style frames.
+        # Each timeframe costs at most one market-data call per pair per run (the
+        # caching provider serves slow frames from memory between bars).
         self._timeframe = settings.analysis_timeframe
+        self._scalp_timeframes = list(settings.scalp_timeframes)
+        self._swing_timeframes = list(settings.swing_timeframes)
         self._timeframes = list(settings.analysis_timeframes)
         self._candle_count = settings.analysis_candle_count
 
-        # A scalp is framed on the lowest configured timeframe, a swing on the
-        # highest — the two horizons the dual signal represents. Computed once
-        # from the same ordered set the AI is shown.
-        ordered = sorted(self._timeframes, key=lambda tf: _TIMEFRAME_MINUTES.get(tf, 0))
-        self._scalp_timeframe = ordered[0]
-        self._swing_timeframe = ordered[-1]
+        # The decision timeframe recorded on each style's signal row: the lowest
+        # frame the scalp is shown, the highest frame the swing is shown — the
+        # two horizons the dual signal represents.
+        self._scalp_timeframe = min(
+            self._scalp_timeframes, key=lambda tf: _TIMEFRAME_MINUTES.get(tf, 0)
+        )
+        self._swing_timeframe = max(
+            self._swing_timeframes, key=lambda tf: _TIMEFRAME_MINUTES.get(tf, 0)
+        )
 
         # Per-style signal lifetime — stamped onto ``expires_at`` so the
         # freshness badge and retention sweep have something to act on.
@@ -397,6 +403,8 @@ class AnalysisController:
                 views=tuple(views),
                 current_scalp=target.current_scalp,
                 current_swing=target.current_swing,
+                scalp_timeframes=tuple(self._scalp_timeframes),
+                swing_timeframes=tuple(self._swing_timeframes),
             )
             dual = await self._ai.analyze(context)
         except ServiceError as exc:

@@ -69,28 +69,66 @@ pip install -r requirements-dev.txt
 
 ---
 
-## 🗺️ Planned Work (Iterations 6-11)
+## 🗺️ Planned Work (Iterations 6-12)
 
 A product review on 2026-06-03 surfaced the core gap: the platform *generates*
 signals but never *measures* them. A signal is drafted, fed back for keep/adjust,
 then expires — nothing ever records whether price hit the take-profit or the stop.
 Without that scoreboard there is no win-rate, no calibration, and no way to prove
-the AI is any good. Iterations 6-11 turn the signal generator into a **measurable,
-self-improving, real-time** trading platform.
+the AI is any good. Iterations 7-12 turn the signal generator into a **measurable,
+self-improving, real-time** trading platform; Iteration 6 comes first and sharpens
+the signal *engine* itself — framing each style on its own timeframes and caching
+the slow ones so a full multi-timeframe cycle fits the data-provider budget.
 
 ### Captured decisions
-- **Outcome tracking is the keystone (Iteration 6) and ships first** — Iterations
-  7 and 8 build directly on the data it records.
+- **Signal-engine efficiency ships first (Iteration 6)** — per-style timeframes
+  plus candle caching make a full multi-timeframe cycle affordable before more
+  work is piled onto each run. **Outcome tracking is the keystone of the
+  measurement work (Iteration 7)** — Iterations 8 and 9 build directly on the
+  data it records.
 - **Current trading focus is XAUUSD (Gold) only.** The Twelve Data free tier's
   per-minute limit is consumed by the multi-timeframe fetch for a single pair (see
-  the rate-limit note in project memory). The architecture stays fully multi-pair;
-  only `ACTIVE_PAIRS` is narrowed. Nothing here hard-codes Gold.
+  the rate-limit note in project memory; Iteration 6's candle caching relaxes this
+  but does not remove the per-minute ceiling). The architecture stays fully
+  multi-pair; only `ACTIVE_PAIRS` is narrowed. Nothing here hard-codes Gold.
 - **Outcomes are evaluated from candles, never tick data** — one cheap fetch per
   cycle, which fits the tier. The evaluator is a pure function so it is fully
   back-testable without network or AI.
 - **Docker is still deferred** (Iteration 5) until the deployment target is settled.
 
-### Iteration 6 - Signal Outcome Tracking (foundation) (20 points)
+### Iteration 6 - Per-Style Timeframes + Candle Caching (efficiency) (18 points)
+Goal: frame each signal style on the timeframes that actually drive it, and stop
+re-fetching slow candles that cannot have changed since the last run — so a full
+multi-timeframe cycle fits inside the Twelve Data free-tier budget.
+- [ ] (4) Config: replace the single `analysis_timeframes` with per-style
+  `scalp_timeframes` (default `5m,15m,1h,4h`) and `swing_timeframes`
+  (default `4h,1d`); expose an ordered-unique `analysis_timeframes` *property*
+  (their union) so the fetch loop and run ledger stay unchanged. Validate each set
+  (known timeframes, deduped, non-empty) and keep `analysis_timeframe` (the
+  primary/decision frame) inside the union.
+- [ ] (5) `services/market_data/cache.py` — a `CachingMarketDataProvider` that
+  *wraps* the concrete provider and implements the same `MarketDataProvider` ABC,
+  so the controller's `fetch_candles` call is unchanged. Cache keyed by
+  `(symbol, timeframe)`, freshness aligned to **bar-close boundaries** (a series
+  is reused only while `now` is in the same bar window as the fetch, so a 4h
+  series is re-fetched at most once per 4h bar and a 1d series once a day —
+  dropped the moment a new bar closes, not on a wall-clock timer); serve from
+  cache while fresh *and* the cached count is sufficient, else fetch. A per-key
+  `asyncio.Lock` prevents a fetch stampede when a manual run overlaps the
+  scheduled one. `aclose()` delegates to the wrapped provider. Wired in the lifespan.
+- [ ] (4) Prompt: carry `scalp_timeframes`/`swing_timeframes` on `AnalysisContext`
+  and label each timeframe block in `_build_user_prompt` with its role
+  (`[SCALP frame]`/`[SWING frame]`/`[shared]`); extend the output contract so the
+  model frames the scalp's levels on the scalp timeframes and the swing's on the
+  swing timeframes, while still reading all of them for bias.
+- [ ] (3) Controller: drive the fetch loop from the union, record the scalp's
+  timeframe as the lowest scalp frame and the swing's as the highest swing frame,
+  and pass the two frame-sets into `AnalysisContext`.
+- [ ] (2) Tests + docs: `CachingMarketDataProvider` tests (fresh-hit,
+  TTL-expiry-miss, insufficient-count-miss, lock), updated config/prompt/controller
+  tests, and refreshed `.env.example` + this README.
+
+### Iteration 7 - Signal Outcome Tracking (foundation) (20 points)
 Goal: record what actually happened to every signal, so the platform has a track record.
 - [ ] (5) Migration: add to `signals` an `outcome` native enum
   (`open|hit_tp1|hit_tp2|hit_tp3|hit_sl|expired|cancelled`), plus `closed_at`,
@@ -109,7 +147,7 @@ Goal: record what actually happened to every signal, so the platform has a track
 - [ ] (3) Surface `outcome`, `realized_r`, `closed_at` on `SignalResponse`; add an
   `?outcome=` filter to `GET /api/v1/signals`.
 
-### Iteration 7 - Performance & Calibration API (16 points)
+### Iteration 8 - Performance & Calibration API (16 points)
 Goal: aggregate the outcome data into a track record the frontend can chart.
 - [ ] (5) `PerformanceController` + repo aggregations: win-rate, profit factor,
   expectancy (avg R), total R and counts — overall and split by `signal_type`.
@@ -120,7 +158,7 @@ Goal: aggregate the outcome data into a track record the frontend can chart.
 - [ ] (3) `GET /api/v1/performance` (filters: `pair`, `signal_type`, `from`/`to`)
   returning summary + calibration buckets + equity series, in the response envelope.
 
-### Iteration 8 - Smarter, Cheaper, More Reliable AI (18 points)
+### Iteration 9 - Smarter, Cheaper, More Reliable AI (18 points)
 Goal: close the learning loop and harden the model boundary.
 - [ ] (5) Feedback loop: inject a compact "recent performance on this pair/style
   (hit-rate, avg R, confidence bias)" block into `BaseAIProvider._build_user_prompt`
@@ -133,7 +171,7 @@ Goal: close the learning loop and harden the model boundary.
 - [ ] (4) `_complete` returns a small usage result alongside the text so the
   controller can persist usage without the view or model importing SDK types.
 
-### Iteration 9 - Macro / Economic-Calendar Awareness (16 points)
+### Iteration 10 - Macro / Economic-Calendar Awareness (16 points)
 Goal: make Gold signals aware of the news that actually moves Gold (USD, Fed, CPI).
 - [ ] (3) `EconomicCalendarProvider` ABC + one concrete provider behind a factory,
   mirroring the `MarketDataProvider` pattern (`services/calendar/`).
@@ -144,7 +182,7 @@ Goal: make Gold signals aware of the news that actually moves Gold (USD, Fed, CP
 - [ ] (4) `GET /api/v1/calendar` endpoint for the frontend banner; guarded by an
   `ECONOMIC_CALENDAR_ENABLED` config flag (off → behaves exactly as today).
 
-### Iteration 10 - Real-time Streaming + Notifications (20 points)
+### Iteration 11 - Real-time Streaming + Notifications (20 points)
 Goal: push updates instead of being polled, and deliver signals off-platform.
 - [ ] (5) In-process event bus: the analysis and outcome jobs publish
   `signal.created`, `signal.closed`, and `run.finished` events.
@@ -158,7 +196,7 @@ Goal: push updates instead of being polled, and deliver signals off-platform.
 - [ ] (3) Config + health: a `notifications` health component reporting
   configured/enabled/not_configured like the existing provider components.
 
-### Iteration 11 - Risk & Position Sizing (10 points)
+### Iteration 12 - Risk & Position Sizing (10 points)
 Goal: turn a signal into an exact, account-aware trade.
 - [ ] (4) Pure `services/risk/position_sizing.py`: given account balance, risk %,
   entry, SL and the instrument's contract spec, compute position size, risk amount,
@@ -167,9 +205,9 @@ Goal: turn a signal into an exact, account-aware trade.
 - [ ] (3) Per-instrument contract metadata (pip value, min lot, contract size) for
   XAUUSD, carried on `Pair` (or a small spec lookup).
 
-**Subtotal (Iterations 6-11): 100 points**
+**Subtotal (Iterations 6-12): 118 points**
 
-**New Total: 185 points** 🚀
+**New Total: 203 points** 🚀
 
 ---
 
