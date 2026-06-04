@@ -44,4 +44,24 @@ describe("SignalCard", () => {
     render(<SignalCard density="comfortable" signal={buildSignal({ tradeStyle: "scalp" })} />);
     expect(screen.getByText("Scalp")).toBeInTheDocument();
   });
+
+  it("shows a win outcome badge with realised R", () => {
+    render(
+      <SignalCard
+        density="comfortable"
+        signal={buildSignal({ outcome: "hit_tp2", realizedR: 2.1 })}
+      />
+    );
+    expect(screen.getByText("TP2 +2.10R")).toBeInTheDocument();
+  });
+
+  it("shows a loss outcome badge", () => {
+    render(
+      <SignalCard
+        density="comfortable"
+        signal={buildSignal({ outcome: "hit_sl", realizedR: -1 })}
+      />
+    );
+    expect(screen.getByText("SL -1.00R")).toBeInTheDocument();
+  });
 });

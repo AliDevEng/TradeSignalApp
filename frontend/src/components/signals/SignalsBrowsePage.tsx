@@ -34,6 +34,7 @@ export function SignalsBrowsePage() {
   const direction = useSignalStore((state) => state.direction);
   const tradeStyle = useSignalStore((state) => state.tradeStyle);
   const status = useSignalStore((state) => state.status);
+  const outcome = useSignalStore((state) => state.outcome);
   const storePair = useSignalStore((state) => state.pair);
   const sort = useSignalStore((state) => state.sort);
   const reset = useSignalStore((state) => state.reset);
@@ -52,8 +53,8 @@ export function SignalsBrowsePage() {
   // The pair filter is enforced server-side, so it's a no-op refinement here;
   // direction/style/status/sort are applied client-side over the loaded pages.
   const visibleSignals = useMemo(
-    () => refineSignals(sourceSignals, { direction, tradeStyle, status, pair: storePair, sort }),
-    [sourceSignals, direction, tradeStyle, status, storePair, sort]
+    () => refineSignals(sourceSignals, { direction, tradeStyle, status, outcome, pair: storePair, sort }),
+    [sourceSignals, direction, tradeStyle, status, outcome, storePair, sort]
   );
 
   const isInitialLoading = !hasMounted || (query.isLoading && !query.isError);

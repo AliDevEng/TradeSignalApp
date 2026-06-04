@@ -7,6 +7,7 @@ import {
   BarChart3,
   CornerDownLeft,
   Gauge,
+  LineChart,
   type LucideIcon,
   PlayCircle,
   Search,
@@ -119,6 +120,15 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
         icon: BarChart3,
         keywords: "analysis runs ledger pipeline",
         run: navigate("/analysis")
+      },
+      {
+        id: "nav-performance",
+        label: "Performance",
+        hint: "Track record",
+        group: "Actions",
+        icon: LineChart,
+        keywords: "performance track record equity curve calibration win rate",
+        run: navigate("/performance")
       },
       {
         id: "action-trigger",

@@ -153,16 +153,22 @@ Goal: record what actually happened to every signal, so the platform has a track
 - [x] (3) Surface `outcome`, `realized_r`, `closed_at` on `SignalResponse`; add an
   `?outcome=` filter to `GET /api/v1/signals`.
 
-### Iteration 8 - Performance & Calibration API (16 points)
+### Iteration 8 - Performance & Calibration API (16 points) ✅ DONE
 Goal: aggregate the outcome data into a track record the frontend can chart.
-- [ ] (5) `PerformanceController` + repo aggregations: win-rate, profit factor,
-  expectancy (avg R), total R and counts — overall and split by `signal_type`.
-- [ ] (5) Confidence calibration: bucket *closed* signals by stated confidence
-  (0-20 … 80-100) and report predicted vs realised hit-rate per bucket — the
-  "when the AI says 80%, is it right 80% of the time?" view.
-- [ ] (3) Equity-curve series: ordered cumulative `realized_r` over closed signals.
-- [ ] (3) `GET /api/v1/performance` (filters: `pair`, `signal_type`, `from`/`to`)
-  returning summary + calibration buckets + equity series, in the response envelope.
+- [x] (5) `PerformanceController` + repo aggregation surface: win-rate, profit
+  factor, expectancy (avg R), total R and counts — overall and split by
+  `signal_type`. The maths lives in a **pure** `PerformanceCalculator`
+  (`services/performance/`) fed by `SignalRepository.list_closed_for_performance`,
+  so it is unit-tested directly rather than inferred from SQL shape.
+- [x] (5) Confidence calibration: bucket *closed, R-scored* signals by stated
+  confidence (0-20 … 80-100) and report predicted (mean confidence) vs realised
+  hit-rate per bucket — the "when the AI says 80%, is it right 80% of the time?"
+  view. Always five ordered buckets for a stable chart axis.
+- [x] (3) Equity-curve series: ordered cumulative `realized_r` over closed signals
+  (oldest-close first, ready to plot).
+- [x] (3) `GET /api/v1/performance` (filters: `pair`, `signal_type`, `from`/`to`)
+  returning summary + per-style summaries + calibration buckets + equity series,
+  in the response envelope.
 
 ### Iteration 9 - Smarter, Cheaper, More Reliable AI (18 points)
 Goal: close the learning loop and harden the model boundary.
@@ -616,6 +622,7 @@ swappable and the logic framework-free).
 | `GET /api/v1/analysis/runs/{run_id}` | `AnalysisRunController.get_run` | `APIResponse[AnalysisRunResponse]` (404 if unknown) |
 | `GET /api/v1/analysis/runs/{run_id}/signals` | `SignalController.list_for_run` | `APIResponse[list[SignalResponse]]` |
 | `POST /api/v1/analysis/runs` | `AnalysisController.run_manual` | `202` + `APIResponse[AnalysisRunAccepted]` |
+| `GET /api/v1/performance` | `PerformanceController.get_performance` | `APIResponse[PerformanceResponse]` — `?pair=`/`?signal_type=`/`?from=`/`?to=` filters |
 
 Two read controllers were added so the pairs and analysis routers stay
 layering-compliant: `PairController` (pairs are small and enumerable, so its
@@ -779,6 +786,40 @@ tighter than analysis so closes are detected promptly). `SignalRepository` gains
 `list_open`, `mark_outcome`, and an `outcome` filter; `SignalResponse` surfaces
 `outcome`/`realized_r`/`closed_at`, and `GET /api/v1/signals` accepts `?outcome=`.
 
+### Performance & calibration API (Iteration 8 deliverable)
+
+This turns the outcome records into a **track record the frontend can chart**.
+The arithmetic lives in a **pure** `PerformanceCalculator`
+(`services/performance/calculator.py`) — the aggregation counterpart to the
+`OutcomeEvaluator`: feed it a set of `ClosedSignal` value objects and it returns
+the summary, calibration table, and equity curve, deterministically and without
+IO, so the maths is unit-tested directly rather than inferred from SQL shape.
+
+A signal counts toward the record only once it is **closed with a defined R**
+(terminal outcome *and* `realized_r` set) — open signals have no result, and a
+stop-less signal has no risk to denominate R in. A "win" is `realized_r > 0`
+(closed in profit), so win-rate, profit factor and calibration all share one
+honest, R-based denominator. The calculator reports:
+
+- **Summary** (overall and per `signal_type`): total, wins/losses, win-rate,
+  total R, expectancy (avg R), gross profit/loss, and profit factor (`null` when
+  there is no losing R — an infinite ratio the frontend labels rather than fakes).
+- **Calibration**: five fixed 20-point confidence buckets, each with the mean
+  *stated* confidence (the prediction) beside the realised hit-rate. All five are
+  always returned for a stable chart x-axis.
+- **Equity curve**: cumulative `realized_r` over the closed signals, oldest-close
+  first.
+
+`SignalRepository.list_closed_for_performance` is the lean query surface (terminal
++ R-scored rows, filtered by `pair`/`signal_type`/close-time window, ordered by
+`closed_at`). The request-scoped `PerformanceController` resolves the pair symbol,
+casts the wire `signal_type` to the ORM enum, maps the rows onto `ClosedSignal`
+(reading scalar columns only — no lazy load), runs the calculator, and maps the
+result onto `PerformanceResponse`. `GET /api/v1/performance` wraps it in the
+shared envelope. In-memory aggregation is the deliberate choice: the closed set
+for the current single-pair focus is small, and a pure calculator is far cheaper
+to trust than hand-rolled aggregate SQL.
+
 ## 🧪 Run
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -812,13 +853,19 @@ ruff format --check .
 pyright
 ```
 
-### ✅ Verification status (Iterations 1–5)
-Last verified on 2026-06-02:
-- `pytest` — **274 passed** (208 from Iterations 1–3, +66 added in Iteration 5:
-  controller unit tests, route integration tests, and the DB-connection-error
-  normalisation tests — covering Iteration 4's controllers/routes)
+### ✅ Verification status (Iterations 1–8)
+Last verified on 2026-06-04:
+- `pytest` — **365 passed** (274 through Iteration 5, then the Iteration 6 candle
+  cache, Iteration 7 outcome evaluator/controller/job, and Iteration 8's
+  performance calculator/controller, repository SQL, and `/performance` route
+  tests)
 - `ruff check .` — clean
-- `ruff format --check .` — clean (78 files)
+- `ruff format --check .` — clean (97 files)
+- `pyright` — clean on the Iteration 8 modules (services/performance, the
+  performance controller, schema, and view)
+- OpenAPI generation exercises every response model, including
+  `PerformanceResponse`, and documents `GET /api/v1/performance` with its
+  `pair`/`signal_type`/`from`/`to` query params
 - `create_app()` boots and registers `GET /api/v1/health`
 - `alembic upgrade head --sql` renders the full schema with the three native
   enums created before the tables that reference them

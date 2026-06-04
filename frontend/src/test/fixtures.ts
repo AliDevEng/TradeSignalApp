@@ -34,6 +34,9 @@ export function buildSignal(overrides: Partial<Signal> = {}): Signal {
     indicators: null,
     aiProvider: "groq",
     aiModel: "llama-3.3-70b-versatile",
+    outcome: "open",
+    realizedR: null,
+    closedAt: null,
     ...overrides
   };
 }

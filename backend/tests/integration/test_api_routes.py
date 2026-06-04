@@ -18,13 +18,20 @@ import pytest
 from app.controllers.analysis_run_controller import AnalysisRunController
 from app.controllers.exceptions import ResourceNotFoundError
 from app.controllers.pair_controller import PairController
+from app.controllers.performance_controller import PerformanceController
 from app.controllers.results import Page
 from app.controllers.signal_controller import SignalController
 from app.dependencies import (
     get_analysis_controller,
     get_analysis_run_controller,
     get_pair_controller,
+    get_performance_controller,
     get_signal_controller,
+)
+from app.schemas.performance import (
+    CalibrationBucket,
+    PerformanceResponse,
+    PerformanceSummary,
 )
 from httpx import ASGITransport, AsyncClient
 
@@ -35,6 +42,49 @@ from tests._factories import make_pair, make_run, make_signal
 SIGNAL = SignalController._to_response(make_signal())
 PAIR = PairController._to_response(make_pair())
 RUN = AnalysisRunController._to_response(make_run())
+
+
+def _empty_summary() -> PerformanceSummary:
+    from decimal import Decimal
+
+    return PerformanceSummary(
+        total=0,
+        wins=0,
+        losses=0,
+        win_rate=0.0,
+        total_r=Decimal("0"),
+        avg_r=Decimal("0"),
+        profit_factor=None,
+        gross_profit=Decimal("0"),
+        gross_loss=Decimal("0"),
+    )
+
+
+def _performance_sample() -> PerformanceResponse:
+    from datetime import UTC, datetime
+
+    buckets = [
+        CalibrationBucket(
+            label=f"{i * 20}-{(i + 1) * 20}%",
+            lower=i * 0.2,
+            upper=(i + 1) * 0.2,
+            count=0,
+            avg_confidence=0.0,
+            win_rate=0.0,
+            wins=0,
+        )
+        for i in range(5)
+    ]
+    return PerformanceResponse(
+        overall=_empty_summary(),
+        by_type={"scalp": _empty_summary(), "swing": _empty_summary()},
+        calibration=buckets,
+        equity_curve=[],
+        generated_at=datetime(2026, 6, 4, 9, 0, tzinfo=UTC),
+    )
+
+
+PERFORMANCE = _performance_sample()
 
 
 @pytest.fixture
@@ -62,6 +112,13 @@ def runs_ctrl(app) -> AsyncMock:
 def analysis_ctrl(app) -> AsyncMock:
     mock = AsyncMock()
     app.dependency_overrides[get_analysis_controller] = lambda: mock
+    return mock
+
+
+@pytest.fixture
+def performance_ctrl(app) -> AsyncMock:
+    mock = AsyncMock(spec=PerformanceController)
+    app.dependency_overrides[get_performance_controller] = lambda: mock
     return mock
 
 
@@ -305,3 +362,56 @@ async def test_trigger_run_returns_202_and_dispatches_background_task(app, analy
     assert body["data"]["status"] == "accepted"
     # The pipeline is dispatched out-of-band, not awaited inline.
     analysis_ctrl.run_manual.assert_awaited_once()
+
+
+# ── GET /performance ─────────────────────────────────────────────────────────
+
+
+async def test_get_performance_wraps_report_in_envelope(client, performance_ctrl):
+    performance_ctrl.get_performance.return_value = PERFORMANCE
+
+    resp = await client.get("/api/v1/performance")
+    body = resp.json()
+
+    assert resp.status_code == 200
+    assert body["success"] is True
+    assert body["data"]["overall"]["total"] == 0
+    assert set(body["data"]["by_type"]) == {"scalp", "swing"}
+    assert len(body["data"]["calibration"]) == 5
+    # Profit factor is surfaced as null, not a sentinel.
+    assert body["data"]["overall"]["profit_factor"] is None
+
+
+async def test_get_performance_forwards_filters(client, performance_ctrl):
+    performance_ctrl.get_performance.return_value = PERFORMANCE
+
+    await client.get(
+        "/api/v1/performance"
+        "?pair=XAUUSD&signal_type=scalp&from=2026-06-01T00:00:00Z&to=2026-06-04T00:00:00Z"
+    )
+
+    kwargs = performance_ctrl.get_performance.await_args.kwargs
+    assert kwargs["pair_symbol"] == "XAUUSD"
+    assert kwargs["signal_type"] == "scalp"
+    assert kwargs["start"] is not None
+    assert kwargs["end"] is not None
+
+
+async def test_get_performance_rejects_unknown_style(client, performance_ctrl):
+    resp = await client.get("/api/v1/performance?signal_type=daytrade")
+    assert resp.status_code == 422
+
+
+async def test_get_performance_unknown_pair_maps_to_404(client, performance_ctrl):
+    performance_ctrl.get_performance.side_effect = ResourceNotFoundError("pair", "NOPE")
+
+    resp = await client.get("/api/v1/performance?pair=NOPE")
+    body = resp.json()
+
+    assert resp.status_code == 404
+    assert body["error"]["code"] == "NOT_FOUND"
+
+
+async def test_get_performance_rejects_invalid_date(client, performance_ctrl):
+    resp = await client.get("/api/v1/performance?from=not-a-date")
+    assert resp.status_code == 422

@@ -36,13 +36,15 @@ Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain
 - Iteration 5 is complete: app-wide navigation shell, real `/dashboard`, `/signals`, and `/analysis` routes, URL-synced filters, route boundaries, breadcrumbs, and active-route highlighting are in place.
 - Iteration 6 is complete: server-side signal pagination/filtering (load-more, URL-driven `pair`/`run`), an indicator snapshot panel (RSI/MACD/EMA/BB/ATR), `ai_provider`/`ai_model` + a live `expires_at` freshness badge + entry→SL/TP distance percentages, analysis-runs observability (status filter, pagination, `/analysis/[runId]` detail with signals-per-run), a wired "Trigger analysis run" button, and a new signal-level-map chart driven by signal levels + indicators (the mock-candle dependency was removed).
 - Iteration 7 is complete: React Query auto-refresh (`refetchInterval`) with live "updated Xs ago" timestamps, functional notifications (new-signal toast + bell dropdown feed), a Cmd/Ctrl+K command palette with global search across pairs/signals plus quick actions, and persisted UI prefs (density + last route) in `localStorage`.
+- Iteration 9 is complete: signal outcome tracking surfaced end-to-end — an outcome badge (`✓ TP2 +2.10R` / `✗ SL -1.00R` / `Open` / `Expired`) on cards and the detail view, an outcome filter (open/win/loss/expired) with `?outcome=` URL sync, a `/closed` track-record history view (win-rate, W/L, net R) with its own nav entry, and a realised-R readout + reached-level marker on the `SignalLevelMap`. The `Signal` type now carries `outcome`/`realizedR`/`closedAt`, mapped from the backend outcome fields.
+- Iteration 10 is complete: a new `/performance` track-record dashboard (nav entry + command-palette action + breadcrumb) backed by the backend `GET /performance` endpoint. It surfaces KPI cards (win-rate, profit factor, expectancy, total R) overall and split scalp/swing, a `lightweight-charts` equity curve (cumulative R, green-above/red-below a 0R baseline), and a confidence-calibration chart (predicted vs realised hit-rate per band). New `usePerformanceQuery` hook + `performanceService` + `mapApiPerformance`, with a pure `buildPerformanceFromSignals` aggregator powering the offline preview fallback.
 - The first screen is now a luxury fintech operations dashboard using a black, gold, blue, and red visual system backed by live backend signal endpoints with typed mock fallback for local preview.
 - Dynamic routes now exist for `/pairs/[symbol]` and `/signals/[signalId]`.
 - Backend health remains wired to `GET /api/v1/health`.
 - `any` is not allowed by ESLint (`@typescript-eslint/no-explicit-any: error`).
 - `postcss` is overridden to `8.5.14` so `npm audit --audit-level=moderate` reports no vulnerabilities.
-- Verified with `npm run check` and local route probes returning `200 OK` for `/`, `/dashboard`, `/signals`, `/analysis`, `/analysis/[runId]`, `/pairs/XAUUSD`, and `/signals/sig-xauusd-1` (and `404` for unknown routes).
-- Next up: Iteration 9 (Outcome & Track Record UI). See **Planned Work (Iterations 9-13)** below.
+- Verified with `npm run check` and local route probes returning `200 OK` for `/`, `/dashboard`, `/signals`, `/closed`, `/performance`, `/analysis`, `/analysis/[runId]`, `/pairs/XAUUSD`, and `/signals/sig-xauusd-1` (and `404` for unknown routes).
+- Next up: Iteration 11 (Live SSE & Notifications). See **Planned Work (Iterations 9-13)** below.
 
 ## Setup Commands
 ```bash
@@ -162,7 +164,8 @@ Subtotal (Iterations 5-8): 70 points — **complete**
 
 ### Iteration 8 notes
 - **Tests:** unit/component tests run under Vitest + React Testing Library
-  (`npm run test`, 59 tests across pure libs and components). Playwright key-route
+  (`npm run test`, 91 tests across pure libs and components as of Iteration 10).
+  Playwright key-route
   smoke tests live in `e2e/` (`npm run e2e:install` then `npm run e2e`) and boot
   their own production server. `npm run check` now also runs the Vitest suite.
 - **Accessibility:** skip-to-content link, `aria-current` on active nav, a focus
@@ -184,8 +187,11 @@ Subtotal (Iterations 5-8): 70 points — **complete**
 
 A product review on 2026-06-03 surfaced the platform's core gap: it shows signals
 but never shows whether they *worked*. The backend roadmap (backend README,
-Iterations 6-11) adds a track record, performance analytics, real-time streaming,
-macro awareness, and risk tooling. Iterations 9-13 surface all of it in the UI.
+Iterations 6-12) adds candle-caching efficiency, a track record, performance
+analytics, real-time streaming, macro awareness, and risk tooling. Iterations
+9-13 surface the user-facing parts in the UI. (Backend numbering shifted by one
+when an efficiency iteration was inserted as backend Iteration 6, so each
+pairing below points one higher than the original plan.)
 
 ### Captured decisions
 - **Current trading focus is XAUUSD (Gold) only** (Twelve Data tier limit). The UI
@@ -197,26 +203,31 @@ macro awareness, and risk tooling. Iterations 9-13 surface all of it in the UI.
 - **Auth/accounts remain Phase 2** and out of scope here. The risk calculator
   (Iteration 12) stores account inputs only in `localStorage` — no backend account.
 
-### Iteration 9 - Outcome & Track Record UI (16 points) — pairs with backend Iteration 6
-- [ ] (4) Outcome badge on `SignalCard` + detail view (`✓ TP2 +2.1R`, `✗ SL −1R`,
-  `open`, `expired`) using the existing gold/green/red visual system
-- [ ] (4) Outcome filter (open / win / loss / expired) wired to the new `?outcome=`
-  query param with URL sync, alongside the existing direction/pair filters
-- [ ] (3) A "Closed signals" history view distinct from the active queue
-- [ ] (3) Realized-R readout + a price-vs-SL/TP progress indicator on the
-  `SignalLevelMap`
-- [ ] (2) Extend the `Signal` type with `outcome`/`realizedR`/`closedAt`; update
+### Iteration 9 - Outcome & Track Record UI (16 points) — pairs with backend Iteration 7 ✅ DONE
+- [x] (4) Outcome badge on `SignalCard` + detail view (`✓ TP2 +2.10R`, `✗ SL -1.00R`,
+  `Open`, `Expired`) using the existing gold/green/red visual system
+- [x] (4) Outcome filter (open / win / loss / expired) with URL sync via `?outcome=`,
+  alongside the existing direction/style/status/pair filters (a client-side
+  refinement over loaded pages, consistent with the other non-server filters)
+- [x] (3) A "Closed signals" history view (`/closed`) distinct from the active queue,
+  with a track-record summary (closed count, win-rate, W/L, net R) and a nav entry
+- [x] (3) Realized-R readout + reached-level marker on the `SignalLevelMap` (the hit
+  TP/SL row is ringed and flagged ✓/✗, derived from the outcome — no live feed)
+- [x] (2) Extend the `Signal` type with `outcome`/`realizedR`/`closedAt`; update
   `signalMappers`, fixtures, and their tests
 
-### Iteration 10 - Performance Dashboard (18 points) — pairs with backend Iteration 7
-- [ ] (5) New `/performance` route + nav entry + breadcrumb
-- [ ] (5) Equity-curve chart (cumulative R over closed signals) via `lightweight-charts`
-- [ ] (4) Confidence-calibration chart (predicted vs realised hit-rate per bucket) —
-  the standout, "is the AI honest?" view
-- [ ] (3) KPI cards: win-rate, profit factor, expectancy, total R — split scalp/swing
-- [ ] (1) `usePerformanceQuery` hook + `performanceService` + types
+### Iteration 10 - Performance Dashboard (18 points) — pairs with backend Iteration 8 ✅ DONE
+- [x] (5) New `/performance` route + nav entry (sidebar + command palette) + breadcrumb
+- [x] (5) Equity-curve chart (cumulative R over closed signals) via `lightweight-charts`
+  — a baseline series anchored at 0R (green above, red underwater), `autoSize`d so
+  it stays responsive without manual resize wiring
+- [x] (4) Confidence-calibration chart (predicted vs realised hit-rate per bucket) —
+  the standout, "is the AI honest?" view, as pure CSS bars (predicted vs realised)
+- [x] (3) KPI cards: win-rate, profit factor, expectancy, total R — overall plus a
+  split scalp/swing comparison
+- [x] (1) `usePerformanceQuery` hook + `performanceService` + `mapApiPerformance` + types
 
-### Iteration 11 - Live (SSE) & Notifications (16 points) — pairs with backend Iteration 10
+### Iteration 11 - Live (SSE) & Notifications (16 points) — pairs with backend Iteration 11
 - [ ] (5) `useEventStream` hook subscribing to `/stream` (`EventSource`) that
   patches/invalidates the React Query cache so cards update live with no refresh
 - [ ] (4) Upgrade the notification bell + toast to fire from real stream events
@@ -225,14 +236,14 @@ macro awareness, and risk tooling. Iterations 9-13 surface all of it in the UI.
   and synced to backend preferences
 - [ ] (3) Telegram connect helper (bot link / chat-id field) + connection status
 
-### Iteration 12 - Risk & Position-Size Calculator (12 points) — pairs with backend Iteration 11
+### Iteration 12 - Risk & Position-Size Calculator (12 points) — pairs with backend Iteration 12
 - [ ] (4) Account inputs (balance, risk %) in a Zustand store persisted to `localStorage`
 - [ ] (4) Position-size widget on `SignalCard` + detail: lot size, risk $, and R:R
   per TP, via `POST /risk/position-size`
 - [ ] (2) `react-hook-form` + `zod` validation on the account inputs
 - [ ] (2) Tests for the sizing display + the persisted store
 
-### Iteration 13 - Macro Awareness & AI Transparency (14 points) — pairs with backend Iterations 8 & 9
+### Iteration 13 - Macro Awareness & AI Transparency (14 points) — pairs with backend Iterations 9 & 10
 - [ ] (4) Dismissible economic-calendar banner ("⚠️ High-impact USD event in 2h:
   CPI") sourced from `/calendar`
 - [ ] (3) A per-day event strip on the dashboard
@@ -243,6 +254,24 @@ macro awareness, and risk tooling. Iterations 9-13 surface all of it in the UI.
 Subtotal (Iterations 9-13): 76 points
 
 **New Total: 206 points** 🚀
+
+### Iteration 10 notes
+- **Data flow:** `performanceService.getPerformance` → `mapApiPerformance`
+  (Decimal-string R fields parsed to numbers; `profit_factor` null preserved) →
+  `usePerformanceQuery` (React Query, 60s `refetchInterval`). Domain types live in
+  `types/performance.ts`; the wire mirror is `ApiPerformance` in `types/tradeApi.ts`.
+- **Charts:** the equity curve is the only `lightweight-charts` chart in the app —
+  a `BaselineSeries` anchored at 0R, `autoSize` (the library owns its own
+  ResizeObserver), torn down on unmount. The calibration chart is pure CSS bars
+  (predicted gold vs realised blue), so it needs no chart library and is
+  jsdom-testable.
+- **Offline preview:** `lib/performance.ts::buildPerformanceFromSignals` mirrors the
+  backend `PerformanceCalculator` (win = realised R > 0; scored = closed with R)
+  and derives a track record from the bundled mock signals when the live API is
+  unreachable — the same mock-fallback pattern as the other pages.
+- **Tests:** `performanceMappers.test.ts` (wire→domain mapping), `performance.test.ts`
+  (the pure aggregator), and `CalibrationChart.test.tsx` (component render). The
+  equity-curve chart is left to the build/typecheck gate rather than jsdom (canvas).
 
 ## Run
 ```bash

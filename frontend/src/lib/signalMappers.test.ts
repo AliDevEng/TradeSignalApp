@@ -46,6 +46,9 @@ function buildApiSignal(overrides: Partial<ApiSignal> = {}): ApiSignal {
     expires_at: "2100-01-01T00:00:00.000Z",
     ai_provider: "groq",
     ai_model: "llama-3.3-70b-versatile",
+    outcome: "open",
+    realized_r: null,
+    closed_at: null,
     ...overrides
   };
 }
@@ -126,5 +129,37 @@ describe("mapApiSignal", () => {
   it("maps the trade style through", () => {
     expect(mapApiSignal(buildApiSignal({ signal_type: "scalp" }), [pair]).tradeStyle).toBe("scalp");
     expect(mapApiSignal(buildApiSignal({ signal_type: "swing" }), [pair]).tradeStyle).toBe("swing");
+  });
+
+  it("defaults the outcome to open and leaves R/closedAt empty when unset", () => {
+    const signal = mapApiSignal(buildApiSignal(), [pair]);
+
+    expect(signal.outcome).toBe("open");
+    expect(signal.realizedR).toBeNull();
+    expect(signal.closedAt).toBeNull();
+  });
+
+  it("maps a closed outcome with its realised R (Decimal string) and close time", () => {
+    const signal = mapApiSignal(
+      buildApiSignal({
+        outcome: "hit_tp2",
+        realized_r: "2.1000",
+        closed_at: "2026-05-08T12:00:00.000Z"
+      }),
+      [pair]
+    );
+
+    expect(signal.outcome).toBe("hit_tp2");
+    expect(signal.realizedR).toBe(2.1);
+    expect(signal.closedAt).toBe("2026-05-08T12:00:00.000Z");
+  });
+
+  it("falls back to open for an unrecognised outcome value", () => {
+    const signal = mapApiSignal(
+      buildApiSignal({ outcome: "moon" as unknown as ApiSignal["outcome"] }),
+      [pair]
+    );
+
+    expect(signal.outcome).toBe("open");
   });
 });

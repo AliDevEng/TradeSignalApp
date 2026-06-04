@@ -2,7 +2,12 @@ import { memo } from "react";
 import Link from "next/link";
 import { Brain, Clock3, ShieldCheck, Target } from "lucide-react";
 
-import { SignalBadge, SignalStatusBadge, TradeStyleBadge } from "@/components/signals/SignalBadge";
+import {
+  OutcomeBadge,
+  SignalBadge,
+  SignalStatusBadge,
+  TradeStyleBadge
+} from "@/components/signals/SignalBadge";
 import { Card } from "@/components/ui/Card";
 import { formatPercent, formatPrice, formatTime, getPricePrecision } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -35,6 +40,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
                 <SignalBadge direction={signal.direction} />
                 <TradeStyleBadge tradeStyle={signal.tradeStyle} />
                 <SignalStatusBadge status={signal.status} />
+                <OutcomeBadge outcome={signal.outcome} realizedR={signal.realizedR} />
               </div>
               <p className="mt-1 text-sm text-[var(--muted)]">{signal.displayName}</p>
             </div>

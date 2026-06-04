@@ -1,6 +1,6 @@
 import { Activity, BarChart3, ShieldCheck, Target, TrendingUp, type LucideIcon } from "lucide-react";
 
-import { SignalBadge, SignalStatusBadge } from "@/components/signals/SignalBadge";
+import { OutcomeBadge, SignalBadge, SignalStatusBadge } from "@/components/signals/SignalBadge";
 import { Card, CardContent } from "@/components/ui/Card";
 import { formatPercent, formatPrice, getPricePrecision } from "@/lib/formatters";
 import type { Signal } from "@/types/signal";
@@ -21,6 +21,7 @@ export function SignalSummaryPanel({ signal }: SignalSummaryPanelProps) {
               <h2 className="text-2xl font-semibold text-[#fff8df]">{signal.symbol}</h2>
               <SignalBadge direction={signal.direction} />
               <SignalStatusBadge status={signal.status} />
+              <OutcomeBadge outcome={signal.outcome} realizedR={signal.realizedR} />
             </div>
             <p className="text-sm text-[var(--muted)]">{signal.displayName}</p>
           </div>

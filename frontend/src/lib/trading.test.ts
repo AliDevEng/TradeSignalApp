@@ -38,7 +38,10 @@ const signal: Signal = {
   },
   indicators: null,
   aiProvider: null,
-  aiModel: null
+  aiModel: null,
+  outcome: "open",
+  realizedR: null,
+  closedAt: null
 };
 
 describe("getPrimaryTarget", () => {

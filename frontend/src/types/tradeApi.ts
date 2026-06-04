@@ -1,5 +1,13 @@
 export type ApiSignalDirection = "buy" | "sell" | "neutral";
 export type ApiSignalType = "scalp" | "swing";
+export type ApiSignalOutcome =
+  | "open"
+  | "hit_tp1"
+  | "hit_tp2"
+  | "hit_tp3"
+  | "hit_sl"
+  | "expired"
+  | "cancelled";
 export type ApiAnalysisRunStatus = "pending" | "running" | "success" | "partial" | "failed";
 export type ApiAnalysisRunTrigger = "scheduler" | "manual";
 
@@ -60,6 +68,54 @@ export type ApiSignal = {
   expires_at: string | null;
   ai_provider: string | null;
   ai_model: string | null;
+  // Outcome tracking (backend Iteration 7). `realized_r` crosses the wire as a
+  // Decimal string, like the other money/number fields.
+  outcome: ApiSignalOutcome;
+  realized_r: string | null;
+  closed_at: string | null;
+};
+
+/**
+ * Aggregated track record from `GET /api/v1/performance` (backend Iteration 8).
+ * R figures cross the wire as Decimal strings, like every other money field;
+ * ratios (`win_rate`, `avg_confidence`, `profit_factor`) are genuine statistics
+ * and arrive as plain numbers. `profit_factor` is null when there is no losing R.
+ */
+export type ApiPerformanceSummary = {
+  total: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  total_r: string;
+  avg_r: string;
+  profit_factor: number | null;
+  gross_profit: string;
+  gross_loss: string;
+};
+
+export type ApiCalibrationBucket = {
+  label: string;
+  lower: number;
+  upper: number;
+  count: number;
+  avg_confidence: number;
+  win_rate: number;
+  wins: number;
+};
+
+export type ApiEquityPoint = {
+  signal_id: string;
+  closed_at: string;
+  realized_r: string;
+  cumulative_r: string;
+};
+
+export type ApiPerformance = {
+  overall: ApiPerformanceSummary;
+  by_type: Record<ApiSignalType, ApiPerformanceSummary>;
+  calibration: ApiCalibrationBucket[];
+  equity_curve: ApiEquityPoint[];
+  generated_at: string;
 };
 
 export type ApiAnalysisRun = {

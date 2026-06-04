@@ -518,6 +518,43 @@ async def test_signal_count_filtered_emits_count_star():
     assert "pair_id = 3" in sql
 
 
+async def test_signal_list_closed_for_performance_filters_closed_and_scored():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    await repo.list_closed_for_performance()
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "from signals" in sql
+    # Only terminal, R-scored rows feed the track record.
+    assert "outcome != 'open'" in sql
+    assert "realized_r is not null" in sql
+    # Ordered oldest-close first so the equity curve needs no re-sort.
+    assert "order by signals.closed_at, signals.generated_at, signals.id" in sql
+
+
+async def test_signal_list_closed_for_performance_applies_all_filters():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    end = datetime(2026, 6, 4, tzinfo=UTC)
+
+    await repo.list_closed_for_performance(
+        pair_id=7,
+        signal_type=SignalType.SWING,
+        start=start,
+        end=end,
+    )
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "pair_id = 7" in sql
+    assert "signal_type = 'swing'" in sql
+    assert "closed_at >=" in sql
+    assert "closed_at <=" in sql
+
+
 async def test_signal_list_for_run_orders_by_pair_id():
     session = _make_session()
     session.execute.return_value = _result_with_scalars([])

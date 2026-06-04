@@ -135,7 +135,10 @@ export const signals: Signal[] = [
     },
     indicators: xauIndicators,
     aiProvider: "groq",
-    aiModel: "llama-3.3-70b-versatile"
+    aiModel: "llama-3.3-70b-versatile",
+    outcome: "open",
+    realizedR: null,
+    closedAt: null
   },
   {
     id: "sig-eurusd-1",
@@ -176,7 +179,10 @@ export const signals: Signal[] = [
     },
     indicators: eurIndicators,
     aiProvider: "groq",
-    aiModel: "llama-3.3-70b-versatile"
+    aiModel: "llama-3.3-70b-versatile",
+    outcome: "hit_tp1",
+    realizedR: 1.2,
+    closedAt: "2026-05-08T12:30:00.000Z"
   },
   {
     id: "sig-gbpusd-1",
@@ -217,7 +223,10 @@ export const signals: Signal[] = [
     },
     indicators: null,
     aiProvider: "groq",
-    aiModel: "llama-3.3-70b-versatile"
+    aiModel: "llama-3.3-70b-versatile",
+    outcome: "open",
+    realizedR: null,
+    closedAt: null
   },
   {
     id: "sig-usdjpy-1",
@@ -258,7 +267,10 @@ export const signals: Signal[] = [
     },
     indicators: null,
     aiProvider: "groq",
-    aiModel: "llama-3.3-70b-versatile"
+    aiModel: "llama-3.3-70b-versatile",
+    outcome: "hit_sl",
+    realizedR: -1,
+    closedAt: "2026-05-08T01:30:00.000Z"
   }
 ];
 

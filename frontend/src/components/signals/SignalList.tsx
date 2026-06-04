@@ -20,14 +20,15 @@ export function SignalList({ signals, pairs }: SignalListProps) {
   const direction = useSignalStore((state) => state.direction);
   const tradeStyle = useSignalStore((state) => state.tradeStyle);
   const status = useSignalStore((state) => state.status);
+  const outcome = useSignalStore((state) => state.outcome);
   const pair = useSignalStore((state) => state.pair);
   const sort = useSignalStore((state) => state.sort);
   const reset = useSignalStore((state) => state.reset);
   const density = useUIStore((state) => state.density);
 
   const filteredSignals = useMemo(
-    () => refineSignals(signals, { direction, tradeStyle, status, pair, sort }),
-    [signals, direction, tradeStyle, status, pair, sort]
+    () => refineSignals(signals, { direction, tradeStyle, status, outcome, pair, sort }),
+    [signals, direction, tradeStyle, status, outcome, pair, sort]
   );
 
   return (

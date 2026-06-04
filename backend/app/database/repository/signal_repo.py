@@ -164,6 +164,44 @@ class SignalRepository(BaseRepository[Signal]):
         result = await self._session.execute(stmt)
         return int(result.scalar_one())
 
+    async def list_closed_for_performance(
+        self,
+        *,
+        pair_id: int | None = None,
+        signal_type: SignalType | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> Sequence[Signal]:
+        """Closed, R-scored signals for the performance API, oldest-close first.
+
+        The performance track record is built only from signals that have both a
+        terminal outcome *and* a defined ``realized_r`` — open signals have no
+        result yet, and a stop-less signal has no risk to denominate R in, so
+        neither can be scored. ``realized_r IS NOT NULL`` already excludes the open
+        rows (R is only stamped at close), but the explicit ``outcome`` filter
+        keeps the intent readable and the index (``ix_signals_outcome``) usable.
+
+        Ordered by ``closed_at`` (then ``generated_at``, then ``id`` for
+        determinism) so the controller can build the equity curve straight from
+        the rows without re-sorting. ``start``/``end`` bound the *close* time,
+        matching the ``from``/``to`` query window the equity curve is read over.
+        """
+        stmt = select(Signal).where(
+            Signal.outcome != SignalOutcome.OPEN,
+            Signal.realized_r.is_not(None),
+        )
+        if pair_id is not None:
+            stmt = stmt.where(Signal.pair_id == pair_id)
+        if signal_type is not None:
+            stmt = stmt.where(Signal.signal_type == signal_type)
+        if start is not None:
+            stmt = stmt.where(Signal.closed_at >= start)
+        if end is not None:
+            stmt = stmt.where(Signal.closed_at <= end)
+        stmt = stmt.order_by(Signal.closed_at, Signal.generated_at, Signal.id)
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
     async def list_for_run(self, analysis_run_id: uuid.UUID) -> Sequence[Signal]:
         """All signals produced by a single analysis run, ordered by pair.
 

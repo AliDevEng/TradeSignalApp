@@ -5,7 +5,9 @@ import {
   useQueryClient
 } from "@tanstack/react-query";
 
+import { mapApiPerformance } from "@/lib/performanceMappers";
 import { mapApiPair, mapApiSignal } from "@/lib/signalMappers";
+import { getPerformance, type PerformanceParams } from "@/services/performanceService";
 import {
   getAnalysisRun,
   getAnalysisRuns,
@@ -23,7 +25,8 @@ import type { TradingPair } from "@/types/signal";
  * tuned to surface fresh data quickly without hammering the API. */
 export const REFETCH_INTERVALS = {
   signals: 30_000,
-  analysisRuns: 20_000
+  analysisRuns: 20_000,
+  performance: 60_000
 } as const;
 
 const DASHBOARD_PAGE_SIZE = 20;
@@ -36,7 +39,8 @@ export const tradeQueryKeys = {
   signal: (signalId: string) => ["signal", signalId] as const,
   analysisRuns: (params: AnalysisRunListParams) => ["analysis-runs", params] as const,
   analysisRun: (runId: string) => ["analysis-run", runId] as const,
-  runSignals: (runId: string) => ["analysis-run", runId, "signals"] as const
+  runSignals: (runId: string) => ["analysis-run", runId, "signals"] as const,
+  performance: (params: PerformanceParams) => ["performance", params] as const
 };
 
 export function usePairsQuery() {
@@ -186,6 +190,21 @@ export function useRunSignalsQuery(runId: string) {
   });
 
   return { pairsQuery, signalsQuery };
+}
+
+/**
+ * The aggregated track record (summary + calibration + equity curve), mapped to
+ * the domain {@link Performance} shape. Auto-refreshes on the performance cadence
+ * — closures trickle in slowly, so a slower poll than the live signal feed.
+ */
+export function usePerformanceQuery(params: PerformanceParams = {}) {
+  return useQuery({
+    queryKey: tradeQueryKeys.performance(params),
+    queryFn: async () => mapApiPerformance(await getPerformance(params)),
+    retry: 1,
+    staleTime: 30_000,
+    refetchInterval: REFETCH_INTERVALS.performance
+  });
 }
 
 export function useTriggerAnalysisRun() {

@@ -2,6 +2,7 @@ import type { ApiIndicatorSnapshot, ApiPair, ApiSignal } from "@/types/tradeApi"
 import type {
   IndicatorSnapshot,
   Signal,
+  SignalOutcome,
   SignalReasoning,
   SignalStatus,
   SignalTarget,
@@ -15,6 +16,22 @@ const timeframeFallback: Timeframe = "1h";
 const supportedTimeframes = new Set<Timeframe>(["1m", "5m", "15m", "30m", "1h", "4h", "1d"]);
 const tradeStyleFallback: SignalTradeStyle = "swing";
 const supportedTradeStyles = new Set<SignalTradeStyle>(["scalp", "swing"]);
+const outcomeFallback: SignalOutcome = "open";
+const supportedOutcomes = new Set<SignalOutcome>([
+  "open",
+  "hit_tp1",
+  "hit_tp2",
+  "hit_tp3",
+  "hit_sl",
+  "expired",
+  "cancelled"
+]);
+
+function normalizeOutcome(value: string | null | undefined): SignalOutcome {
+  return value && supportedOutcomes.has(value as SignalOutcome)
+    ? (value as SignalOutcome)
+    : outcomeFallback;
+}
 
 function normalizeTradeStyle(value: string | null | undefined): SignalTradeStyle {
   return value && supportedTradeStyles.has(value as SignalTradeStyle)
@@ -192,6 +209,9 @@ export function mapApiSignal(signal: ApiSignal, pairs: TradingPair[]): Signal {
     reasoning: buildReasoning(signal),
     indicators: mapIndicators(signal.indicators_snapshot),
     aiProvider: signal.ai_provider,
-    aiModel: signal.ai_model
+    aiModel: signal.ai_model,
+    outcome: normalizeOutcome(signal.outcome),
+    realizedR: parsePrice(signal.realized_r ?? null),
+    closedAt: signal.closed_at ?? null
   };
 }

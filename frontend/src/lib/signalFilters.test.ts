@@ -8,6 +8,7 @@ const base: SignalRefinement = {
   direction: "all",
   tradeStyle: "all",
   status: "all",
+  outcome: "all",
   pair: "all",
   sort: "confidence"
 };
@@ -33,6 +34,22 @@ describe("filterSignals", () => {
     const result = filterSignals(signals, { ...base, tradeStyle: "scalp" });
     expect(result.every((signal) => signal.tradeStyle === "scalp")).toBe(true);
     expect(result.length).toBeGreaterThan(0);
+  });
+
+  it("filters by outcome category (wins)", () => {
+    const result = filterSignals(signals, { ...base, outcome: "win" });
+    expect(result.every((signal) => signal.outcome.startsWith("hit_tp"))).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it("filters by outcome category (losses)", () => {
+    const result = filterSignals(signals, { ...base, outcome: "loss" });
+    expect(result.every((signal) => signal.outcome === "hit_sl")).toBe(true);
+  });
+
+  it("filters by outcome category (open)", () => {
+    const result = filterSignals(signals, { ...base, outcome: "open" });
+    expect(result.every((signal) => signal.outcome === "open")).toBe(true);
   });
 });
 

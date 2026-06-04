@@ -3,6 +3,20 @@ export type SignalTradeStyle = "scalp" | "swing";
 export type SignalStatus = "active" | "watchlist" | "expired";
 export type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
+/**
+ * What price did after the signal was generated — the backend outcome
+ * vocabulary (see `models/signal.py::SignalOutcome`). `open` until the outcome
+ * evaluator finds a terminal result.
+ */
+export type SignalOutcome =
+  | "open"
+  | "hit_tp1"
+  | "hit_tp2"
+  | "hit_tp3"
+  | "hit_sl"
+  | "expired"
+  | "cancelled";
+
 export type SignalTargetLabel = "TP1" | "TP2" | "TP3";
 
 export type SignalTarget = {
@@ -77,6 +91,12 @@ export type Signal = {
   indicators: IndicatorSnapshot | null;
   aiProvider: string | null;
   aiModel: string | null;
+  /** What happened after generation. `open` until the evaluator closes it. */
+  outcome: SignalOutcome;
+  /** Realised result in R multiples. Null while open or when risk is undefined. */
+  realizedR: number | null;
+  /** When the signal reached a terminal outcome (ISO 8601). Null while open. */
+  closedAt: string | null;
 };
 
 export type SignalStats = {

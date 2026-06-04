@@ -19,6 +19,7 @@ from app.controllers import (
     AnalysisController,
     AnalysisRunController,
     PairController,
+    PerformanceController,
     SignalController,
 )
 from app.database import Database
@@ -148,6 +149,16 @@ def get_analysis_run_controller(runs: AnalysisRunRepositoryDep) -> AnalysisRunCo
 
 
 AnalysisRunControllerDep = Annotated[AnalysisRunController, Depends(get_analysis_run_controller)]
+
+
+def get_performance_controller(
+    signals: SignalRepositoryDep,
+    pairs: PairRepositoryDep,
+) -> PerformanceController:
+    return PerformanceController(signals=signals, pairs=pairs)
+
+
+PerformanceControllerDep = Annotated[PerformanceController, Depends(get_performance_controller)]
 
 
 # ── Iteration-3 services (resolved off app state) ────────────────────────────
