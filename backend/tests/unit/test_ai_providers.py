@@ -8,6 +8,7 @@ mimic each SDK's response shape and error type.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -20,12 +21,16 @@ from app.services.ai import (
     AIRequestError,
     AIResponseError,
     AnalysisContext,
+    AnalysisResult,
     AnthropicProvider,
+    CompletionResult,
     DualSignalDraft,
     GroqProvider,
+    PriorPerformance,
     PriorSignal,
     SignalDraft,
     TimeframeView,
+    TokenUsage,
     build_ai_provider,
 )
 from app.services.ai.base import BaseAIProvider
@@ -72,16 +77,17 @@ def _context() -> AnalysisContext:
 class _FakeProvider(BaseAIProvider):
     provider_name = "fake"
 
-    def __init__(self, reply: str) -> None:
+    def __init__(self, reply: str, *, usage: TokenUsage | None = None) -> None:
         self.model = "fake-1"
         self._reply = reply
+        self._usage = usage
         self.system: str | None = None
         self.user: str | None = None
 
-    async def _complete(self, *, system: str, user: str) -> str:
+    async def _complete(self, *, system: str, user: str) -> CompletionResult:
         self.system = system
         self.user = user
-        return self._reply
+        return CompletionResult(text=self._reply, usage=self._usage)
 
     async def aclose(self) -> None:
         return None
@@ -92,8 +98,10 @@ class _FakeProvider(BaseAIProvider):
 
 async def test_analyze_returns_dual_signal_draft():
     provider = _FakeProvider(_VALID_DUAL)
-    dual = await provider.analyze(_context())
+    result = await provider.analyze(_context())
 
+    assert isinstance(result, AnalysisResult)
+    dual = result.dual
     assert isinstance(dual, DualSignalDraft)
     assert dual.scalp.direction == "buy"
     assert dual.scalp.entry == Decimal("1.105")
@@ -102,6 +110,47 @@ async def test_analyze_returns_dual_signal_draft():
     # The prompt actually carried the instrument, and the contract names both styles.
     assert "EURUSD" in provider.user
     assert "scalp" in provider.system and "swing" in provider.system
+
+
+async def test_analyze_threads_token_usage_through():
+    provider = _FakeProvider(_VALID_DUAL, usage=TokenUsage(prompt_tokens=120, completion_tokens=45))
+    result = await provider.analyze(_context())
+
+    assert result.usage is not None
+    assert result.usage.prompt_tokens == 120
+    assert result.usage.completion_tokens == 45
+    assert result.usage.total_tokens == 165
+
+
+async def test_analyze_usage_is_none_when_provider_reports_none():
+    result = await _FakeProvider(_VALID_DUAL).analyze(_context())
+    assert result.usage is None
+
+
+async def test_user_prompt_includes_recent_performance_when_supplied():
+    base = _context()
+    context = AnalysisContext(
+        symbol=base.symbol,
+        primary_timeframe=base.primary_timeframe,
+        views=base.views,
+        scalp_performance=PriorPerformance(
+            closed=10, win_rate=0.4, avg_r=Decimal("0.15"), confidence_bias=0.2
+        ),
+        swing_performance=None,
+    )
+    provider = _FakeProvider(_VALID_DUAL)
+    await provider.analyze(context)
+
+    assert "Your recent track record" in provider.user
+    assert "SCALP: 10 closed | win-rate 40% | avg +0.15R" in provider.user
+    assert "over-confident" in provider.user
+    assert "SWING: no closed history yet" in provider.user
+
+
+async def test_user_prompt_omits_performance_when_absent():
+    provider = _FakeProvider(_VALID_DUAL)
+    await provider.analyze(_context())
+    assert "Your recent track record" not in provider.user
 
 
 async def test_user_prompt_includes_prior_signals_for_keep_or_adjust():
@@ -349,13 +398,20 @@ class _GroqCompletions:
         if self._outer.error is not None:
             raise self._outer.error
         message = SimpleNamespace(content=self._outer.content)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=self._outer.usage)
 
 
 class _FakeGroqClient:
-    def __init__(self, *, content: str = _VALID_BUY, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        content: str = _VALID_BUY,
+        error: Exception | None = None,
+        usage: object | None = None,
+    ) -> None:
         self.content = content
         self.error = error
+        self.usage = usage
         self.calls: list[dict] = []
         self.chat = SimpleNamespace(completions=_GroqCompletions(self))
 
@@ -364,9 +420,25 @@ async def test_groq_complete_returns_content_and_requests_json_mode():
     client = _FakeGroqClient()
     provider = GroqProvider("k", "llama-x", client=client)
     out = await provider._complete(system="sys", user="usr")
-    assert out == _VALID_BUY
+    assert isinstance(out, CompletionResult)
+    assert out.text == _VALID_BUY
     assert client.calls[0]["response_format"] == {"type": "json_object"}
     assert client.calls[0]["model"] == "llama-x"
+
+
+async def test_groq_complete_captures_token_usage():
+    usage = SimpleNamespace(prompt_tokens=200, completion_tokens=80)
+    client = _FakeGroqClient(usage=usage)
+    provider = GroqProvider("k", "llama-x", client=client)
+    out = await provider._complete(system="s", user="u")
+    assert out.usage == TokenUsage(prompt_tokens=200, completion_tokens=80)
+
+
+async def test_groq_complete_usage_none_when_absent():
+    out = await GroqProvider("k", "llama-x", client=_FakeGroqClient())._complete(
+        system="s", user="u"
+    )
+    assert out.usage is None
 
 
 async def test_groq_error_is_wrapped():
@@ -387,25 +459,69 @@ class _AnthropicMessages:
         self._outer.calls.append(kwargs)
         if self._outer.error is not None:
             raise self._outer.error
-        blocks = [SimpleNamespace(type="text", text=self._outer.text)]
-        return SimpleNamespace(content=blocks)
+        return SimpleNamespace(content=self._outer.blocks, usage=self._outer.usage)
 
 
 class _FakeAnthropicClient:
-    def __init__(self, *, text: str = _VALID_BUY, error: Exception | None = None) -> None:
-        self.text = text
+    def __init__(
+        self,
+        *,
+        text: str | None = _VALID_BUY,
+        tool_input: dict | None = None,
+        error: Exception | None = None,
+        usage: object | None = None,
+    ) -> None:
         self.error = error
+        self.usage = usage
         self.calls: list[dict] = []
+        blocks: list[SimpleNamespace] = []
+        if tool_input is not None:
+            blocks.append(
+                SimpleNamespace(type="tool_use", name="emit_dual_signal", input=tool_input)
+            )
+        elif text is not None:
+            blocks.append(SimpleNamespace(type="text", text=text))
+        self.blocks = blocks
         self.messages = _AnthropicMessages(self)
 
 
-async def test_anthropic_complete_concatenates_text_and_passes_system():
+async def test_anthropic_forces_the_signal_tool():
     client = _FakeAnthropicClient(text=_VALID_BUY)
     provider = AnthropicProvider("k", "claude-x", client=client)
-    out = await provider._complete(system="SYSTEM", user="USER")
-    assert out == _VALID_BUY
-    assert client.calls[0]["system"] == "SYSTEM"
-    assert client.calls[0]["messages"] == [{"role": "user", "content": "USER"}]
+    await provider._complete(system="SYSTEM", user="USER")
+
+    call = client.calls[0]
+    assert call["system"] == "SYSTEM"
+    assert call["messages"] == [{"role": "user", "content": "USER"}]
+    # A single forced tool whose schema is the dual-signal contract.
+    assert call["tool_choice"] == {"type": "tool", "name": "emit_dual_signal"}
+    assert call["tools"][0]["name"] == "emit_dual_signal"
+    assert "scalp" in call["tools"][0]["input_schema"]["properties"]
+
+
+async def test_anthropic_reads_structured_tool_output():
+    payload = {
+        "scalp": {"direction": "buy", "confidence": 0.6, "entry": 1.1, "take_profits": [1.2]},
+        "swing": {"direction": "sell", "confidence": 0.7, "entry": 1.1, "take_profits": [1.0]},
+    }
+    client = _FakeAnthropicClient(text=None, tool_input=payload)
+    provider = AnthropicProvider("k", "claude-x", client=client)
+    out = await provider._complete(system="s", user="u")
+    # The tool input is serialised back to JSON for the base parser.
+    assert json.loads(out.text) == payload
+
+
+async def test_anthropic_falls_back_to_text_without_a_tool_block():
+    client = _FakeAnthropicClient(text=_VALID_BUY)
+    out = await AnthropicProvider("k", "claude-x", client=client)._complete(system="s", user="u")
+    assert out.text == _VALID_BUY
+
+
+async def test_anthropic_captures_token_usage():
+    usage = SimpleNamespace(input_tokens=300, output_tokens=90)
+    client = _FakeAnthropicClient(text=_VALID_BUY, usage=usage)
+    out = await AnthropicProvider("k", "claude-x", client=client)._complete(system="s", user="u")
+    assert out.usage == TokenUsage(prompt_tokens=300, completion_tokens=90)
 
 
 async def test_anthropic_empty_text_raises_response_error():

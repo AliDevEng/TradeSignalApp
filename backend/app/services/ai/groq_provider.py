@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import groq
 
-from app.services.ai.base import AIRequestError, BaseAIProvider
+from app.services.ai.base import (
+    AIRequestError,
+    BaseAIProvider,
+    CompletionResult,
+    TokenUsage,
+)
 
 
 class GroqProvider(BaseAIProvider):
@@ -34,7 +39,7 @@ class GroqProvider(BaseAIProvider):
         # boundary on top so callers never see a raw ``groq.*`` exception.
         self._client = client or groq.AsyncGroq(api_key=api_key, timeout=timeout_seconds)
 
-    async def _complete(self, *, system: str, user: str) -> str:
+    async def _complete(self, *, system: str, user: str) -> CompletionResult:
         try:
             response = await self._client.chat.completions.create(
                 model=self.model,
@@ -50,7 +55,23 @@ class GroqProvider(BaseAIProvider):
             raise AIRequestError(f"Groq request failed: {exc}") from exc
 
         content = response.choices[0].message.content if response.choices else None
-        return content or ""
+        return CompletionResult(text=content or "", usage=self._usage_of(response))
+
+    @staticmethod
+    def _usage_of(response: object) -> TokenUsage | None:
+        """Read token counts from an OpenAI-shaped ``usage`` block, if present.
+
+        Tolerant by design: a response without usage (or a fake in tests) yields
+        ``None`` rather than raising — usage is for cost telemetry, never a
+        correctness dependency.
+        """
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        return TokenUsage(
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+        )
 
     async def aclose(self) -> None:
         if self._owns_client:

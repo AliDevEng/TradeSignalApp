@@ -27,7 +27,7 @@ from app.controllers import analysis_controller as ac
 from app.controllers.analysis_controller import AnalysisController
 from app.models import AnalysisRunStatus, AnalysisRunTrigger, SignalType
 from app.services import ServiceError
-from app.services.ai import DualSignalDraft, SignalDraft
+from app.services.ai import AnalysisResult, DualSignalDraft, SignalDraft, TokenUsage
 
 from tests._factories import make_pair
 
@@ -46,6 +46,9 @@ class Store:
     signals: list = field(default_factory=list)
     # Per-pair currently-open signals fed back into the AI (pair_id -> {style: signal}).
     current_by_pair: dict = field(default_factory=dict)
+    # Per-pair recent *closed* signals feeding the performance feedback loop
+    # (pair_id -> [signal]); newest-first, as the repo returns them.
+    recent_closed_by_pair: dict = field(default_factory=dict)
     commits: int = 0
     fail_add_all: bool = False  # simulate a persistence blip during finalisation
 
@@ -107,6 +110,13 @@ class _FakeSignalRepo:
         seeded = self._store.current_by_pair.get(pair_id, {})
         return {style: seeded.get(style) for style in SignalType}
 
+    async def list_recent_closed(self, *, pair_id, signal_type=None, limit=20):
+        # Feedback-loop lookup; the store seeds recent closed signals per pair.
+        rows = self._store.recent_closed_by_pair.get(pair_id, [])
+        if signal_type is not None:
+            rows = [r for r in rows if r.signal_type == signal_type]
+        return rows[:limit]
+
 
 # ── Fake services ────────────────────────────────────────────────────────────
 
@@ -142,13 +152,15 @@ class _FakeAI:
         per_symbol: dict | None = None,
         fail_symbols: set[str] | None = None,
         crash_symbols: set[str] | None = None,
+        usage: TokenUsage | None = None,
     ) -> None:
         self._dual = dual
         self._per_symbol = per_symbol or {}
         self._fail = fail_symbols or set()
         self._crash = crash_symbols or set()
+        self._usage = usage
         # Records every context analyse() was called with, so tests can assert
-        # the keep/adjust prior signals were forwarded.
+        # the keep/adjust priors and performance feedback were forwarded.
         self.contexts: list = []
 
     async def analyze(self, context):
@@ -158,9 +170,8 @@ class _FakeAI:
             raise ServiceError(f"AI failed for {sym}")
         if sym in self._crash:
             raise ValueError(f"unexpected boom for {sym}")
-        if sym in self._per_symbol:
-            return self._per_symbol[sym]
-        return self._dual or _dual_draft()
+        dual = self._per_symbol.get(sym, self._dual or _dual_draft())
+        return AnalysisResult(dual=dual, usage=self._usage)
 
 
 def _draft(direction="buy", entry="1.10000000", tps=("1.12000000", "1.15000000"), confidence=0.72):
@@ -353,6 +364,61 @@ async def test_prior_signals_are_forwarded_to_the_ai_context():
     assert context.current_scalp.direction == "sell"
     assert context.current_scalp.entry == Decimal("1.20000000")
     assert context.current_swing is None
+
+
+# ── Cost / usage tracking ────────────────────────────────────────────────────
+
+
+async def test_usage_is_summed_across_pairs_and_cost_estimated():
+    store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD"), make_pair(id=2, symbol="GBPUSD")])
+    ai = _FakeAI(usage=TokenUsage(prompt_tokens=100, completion_tokens=50))
+    ctrl = _build(store, ai=ai)
+
+    run = await ctrl.run_analysis()
+
+    # Two pairs x (100 prompt, 50 completion).
+    assert run.prompt_tokens == 200
+    assert run.completion_tokens == 100
+    # llama-3.3-70b-versatile pricing: (200*0.59 + 100*0.79) / 1e6.
+    assert run.cost_usd == Decimal("0.000197")
+
+
+async def test_usage_columns_null_when_provider_reports_none():
+    store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
+    ctrl = _build(store)  # default fake AI reports no usage
+
+    run = await ctrl.run_analysis()
+
+    assert run.prompt_tokens is None
+    assert run.completion_tokens is None
+    assert run.cost_usd is None
+
+
+# ── Performance feedback loop ─────────────────────────────────────────────────
+
+
+async def test_recent_performance_is_forwarded_to_the_ai_context():
+    pair = make_pair(id=1, symbol="EURUSD")
+    closed = [
+        SimpleNamespace(signal_type=SignalType.SCALP, confidence=0.8, realized_r=Decimal("2.0")),
+        SimpleNamespace(signal_type=SignalType.SCALP, confidence=0.8, realized_r=Decimal("-1.0")),
+    ]
+    store = Store(active_pairs=[pair], recent_closed_by_pair={1: closed})
+    ai = _FakeAI()
+    ctrl = _build(store, ai=ai)
+
+    await ctrl.run_analysis()
+
+    (context,) = ai.contexts
+    perf = context.scalp_performance
+    assert perf is not None
+    assert perf.closed == 2
+    assert perf.win_rate == 0.5
+    assert perf.avg_r == Decimal("0.5000")
+    # mean confidence 0.8 - win-rate 0.5 = +0.30 (over-confident).
+    assert perf.confidence_bias == pytest.approx(0.3)
+    # No closed swing history → that style's feedback stays None.
+    assert context.swing_performance is None
 
 
 # ── Trigger tagging ──────────────────────────────────────────────────────────

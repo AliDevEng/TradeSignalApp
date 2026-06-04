@@ -17,13 +17,18 @@ from app.services.ai.base import (
     AIRequestError,
     AIResponseError,
     AnalysisContext,
+    AnalysisResult,
+    CompletionResult,
     DualSignalDraft,
+    PriorPerformance,
     PriorSignal,
     SignalDirection,
     SignalDraft,
     TimeframeView,
+    TokenUsage,
 )
 from app.services.ai.groq_provider import GroqProvider
+from app.services.ai.pricing import estimate_cost_usd
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -34,14 +39,19 @@ __all__ = [
     "AIRequestError",
     "AIResponseError",
     "AnalysisContext",
+    "AnalysisResult",
     "AnthropicProvider",
+    "CompletionResult",
     "DualSignalDraft",
     "GroqProvider",
+    "PriorPerformance",
     "PriorSignal",
     "SignalDirection",
     "SignalDraft",
     "TimeframeView",
+    "TokenUsage",
     "build_ai_provider",
+    "estimate_cost_usd",
 ]
 
 

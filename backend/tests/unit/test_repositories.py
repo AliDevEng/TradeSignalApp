@@ -555,6 +555,31 @@ async def test_signal_list_closed_for_performance_applies_all_filters():
     assert "closed_at <=" in sql
 
 
+async def test_signal_list_recent_closed_filters_scored_and_orders_desc():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    await repo.list_recent_closed(pair_id=7, signal_type=SignalType.SCALP, limit=15)
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "outcome != 'open'" in sql
+    assert "realized_r is not null" in sql
+    assert "pair_id = 7" in sql
+    assert "signal_type = 'scalp'" in sql
+    # Newest-first, bounded — recent behaviour, not all history.
+    assert "order by signals.closed_at desc" in sql
+    assert "limit 15" in sql
+
+
+async def test_signal_list_recent_closed_rejects_non_positive_limit():
+    session = _make_session()
+    repo = SignalRepository(session)
+
+    with pytest.raises(ValueError, match="positive"):
+        await repo.list_recent_closed(pair_id=1, limit=0)
+
+
 async def test_signal_list_for_run_orders_by_pair_id():
     session = _make_session()
     session.execute.return_value = _result_with_scalars([])

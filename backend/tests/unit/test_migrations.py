@@ -254,6 +254,32 @@ def test_offline_upgrade_adds_outcome_index(initial_migration_sql: str):
     assert "ix_signals_outcome" in initial_migration_sql
 
 
+# ── 0005: analysis_run AI usage / cost ─────────────────────────────────────
+
+
+def test_offline_upgrade_adds_usage_columns(initial_migration_sql: str):
+    sql = initial_migration_sql
+    for column in ("prompt_tokens", "completion_tokens", "cost_usd"):
+        assert re.search(rf"ADD COLUMN {column}\b", sql, re.IGNORECASE), (
+            f"migration must add the {column!r} column"
+        )
+
+
+def test_offline_upgrade_uses_numeric_for_cost_usd(initial_migration_sql: str):
+    """Money is never Float — cost_usd must be NUMERIC(12, 6)."""
+    assert re.search(r"cost_usd\s+NUMERIC\(12,\s*6\)", initial_migration_sql, re.IGNORECASE)
+
+
+def test_offline_upgrade_adds_non_negative_usage_checks(initial_migration_sql: str):
+    sql = initial_migration_sql
+    for name in (
+        "ck_analysis_runs_prompt_tokens_non_negative",
+        "ck_analysis_runs_completion_tokens_non_negative",
+        "ck_analysis_runs_cost_usd_non_negative",
+    ):
+        assert name in sql, f"missing constraint {name!r} in migration SQL"
+
+
 # ── env.py wiring ──────────────────────────────────────────────────────────
 
 

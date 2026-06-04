@@ -77,9 +77,12 @@ from app.services.ai import (
     AIProvider,
     AnalysisContext,
     DualSignalDraft,
+    PriorPerformance,
     PriorSignal,
     SignalDraft,
     TimeframeView,
+    TokenUsage,
+    estimate_cost_usd,
 )
 from app.services.indicators import IndicatorCalculator
 from app.services.market_data import MarketDataProvider
@@ -90,6 +93,13 @@ logger = logging.getLogger(__name__)
 # ``Text``, but a run over many pairs could otherwise accumulate a wall of
 # stack-trace-adjacent text; a bounded summary keeps the ledger row scannable.
 _MAX_ERROR_SUMMARY: Final[int] = 1000
+
+# How many recent closed signals (per style) feed the model's "your track record"
+# block. Bounded so the feedback reflects *recent* behaviour, not all of history.
+_FEEDBACK_LOOKBACK: Final[int] = 20
+
+# R figures in the feedback summary share the evaluator's 4-decimal scale.
+_R_QUANTUM: Final[Decimal] = Decimal("0.0001")
 
 # Relative magnitude of each timeframe, used to pick the lowest (scalp) and
 # highest (swing) configured timeframe to frame each style's signal on.
@@ -133,6 +143,36 @@ def _to_prior(signal: Signal | None) -> PriorSignal | None:
     )
 
 
+def _performance_of(signals: Sequence[Signal]) -> PriorPerformance | None:
+    """Summarise a style's recent closed signals into the feedback the AI sees.
+
+    Pure projection over already-loaded scalar columns (``confidence``,
+    ``realized_r``) — no lazy-load risk. ``confidence_bias`` is the mean stated
+    confidence minus the realised win-rate (positive ⇒ over-confident). Returns
+    ``None`` when there is no closed history, so the prompt omits the block.
+    """
+    if not signals:
+        return None
+    closed = len(signals)
+    wins = 0
+    total_r = Decimal(0)
+    total_confidence = 0.0
+    for signal in signals:
+        total_confidence += signal.confidence
+        realized = signal.realized_r
+        if realized is not None:
+            total_r += realized
+            if realized > 0:
+                wins += 1
+    win_rate = wins / closed
+    return PriorPerformance(
+        closed=closed,
+        win_rate=win_rate,
+        avg_r=(total_r / closed).quantize(_R_QUANTUM),
+        confidence_bias=(total_confidence / closed) - win_rate,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _PairTarget:
     """The minimal, detached projection of a ``Pair`` the run needs.
@@ -147,6 +187,10 @@ class _PairTarget:
     symbol: str
     current_scalp: PriorSignal | None = None
     current_swing: PriorSignal | None = None
+    # The pair's recent realised track record per style, fed back to the model
+    # (Iteration 9). Snapshotted in the opening transaction alongside the priors.
+    scalp_performance: PriorPerformance | None = None
+    swing_performance: PriorPerformance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +208,9 @@ class _PairOutcome:
     dual: DualSignalDraft | None = None
     indicators: dict[str, object] | None = None
     error: str | None = None
+    # Token usage for this pair's AI call (Iteration 9); ``None`` when the
+    # provider didn't report it or the pair failed before/at the AI call.
+    usage: TokenUsage | None = None
 
     @property
     def failed(self) -> bool:
@@ -337,12 +384,22 @@ class AnalysisController:
             targets: list[_PairTarget] = []
             for p in await pairs.list_active():
                 current = await signal_repo.current_for_pair(p.id)
+                # The pair's recent realised track record per style — fed back so
+                # the model calibrates against its own results (Iteration 9).
+                scalp_closed = await signal_repo.list_recent_closed(
+                    pair_id=p.id, signal_type=SignalType.SCALP, limit=_FEEDBACK_LOOKBACK
+                )
+                swing_closed = await signal_repo.list_recent_closed(
+                    pair_id=p.id, signal_type=SignalType.SWING, limit=_FEEDBACK_LOOKBACK
+                )
                 targets.append(
                     _PairTarget(
                         id=p.id,
                         symbol=p.symbol,
                         current_scalp=_to_prior(current[SignalType.SCALP]),
                         current_swing=_to_prior(current[SignalType.SWING]),
+                        scalp_performance=_performance_of(scalp_closed),
+                        swing_performance=_performance_of(swing_closed),
                     )
                 )
 
@@ -405,8 +462,10 @@ class AnalysisController:
                 current_swing=target.current_swing,
                 scalp_timeframes=tuple(self._scalp_timeframes),
                 swing_timeframes=tuple(self._swing_timeframes),
+                scalp_performance=target.scalp_performance,
+                swing_performance=target.swing_performance,
             )
-            dual = await self._ai.analyze(context)
+            result = await self._ai.analyze(context)
         except ServiceError as exc:
             logger.warning("Pair %s failed analysis: %s", target.symbol, exc)
             return _PairOutcome(target=target, error=f"{type(exc).__name__}: {exc}")
@@ -414,7 +473,9 @@ class AnalysisController:
             logger.exception("Pair %s raised an unexpected error during analysis", target.symbol)
             return _PairOutcome(target=target, error=f"{type(exc).__name__}: {exc}")
 
-        return _PairOutcome(target=target, dual=dual, indicators=indicators)
+        return _PairOutcome(
+            target=target, dual=result.dual, indicators=indicators, usage=result.usage
+        )
 
     # ── Phase 3: persist signals + finalise the ledger (one transaction) ─────
 
@@ -439,6 +500,12 @@ class AnalysisController:
         processed = sum(1 for o in outcomes if not o.failed)
         failed = sum(1 for o in outcomes if o.failed)
 
+        # Roll the per-pair token usage up to the run and estimate its cost. The
+        # controller only ever touches the provider-neutral ``TokenUsage`` and a
+        # ``Decimal`` — no SDK type leaks into persistence.
+        usage = self._sum_usage(outcomes)
+        cost_usd = estimate_cost_usd(self._ai.model, usage)
+
         async with self._database.session() as session:
             runs = AnalysisRunRepository(session)
             signal_repo = SignalRepository(session)
@@ -455,10 +522,29 @@ class AnalysisController:
             run.pairs_failed = failed
             run.finished_at = self._clock()
             run.error_message = self._summarise_errors(outcomes)
+            run.prompt_tokens = usage.prompt_tokens if usage else None
+            run.completion_tokens = usage.completion_tokens if usage else None
+            run.cost_usd = cost_usd
 
             await session.commit()
 
         return run
+
+    @staticmethod
+    def _sum_usage(outcomes: Sequence[_PairOutcome]) -> TokenUsage | None:
+        """Sum token usage across the run's pairs, or ``None`` if none reported.
+
+        A pair that failed (or whose provider didn't report usage) simply
+        contributes nothing; if no pair reported usage the run's columns stay
+        ``NULL`` rather than a misleading zero.
+        """
+        usages = [o.usage for o in outcomes if o.usage is not None]
+        if not usages:
+            return None
+        return TokenUsage(
+            prompt_tokens=sum((u.prompt_tokens or 0) for u in usages),
+            completion_tokens=sum((u.completion_tokens or 0) for u in usages),
+        )
 
     def _build_signals(
         self,

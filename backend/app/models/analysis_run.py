@@ -16,12 +16,14 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -72,6 +74,18 @@ class AnalysisRun(Base, TimestampMixin):
         CheckConstraint(
             "finished_at IS NULL OR finished_at >= started_at",
             name="finished_at_not_before_started_at",
+        ),
+        CheckConstraint(
+            "prompt_tokens IS NULL OR prompt_tokens >= 0",
+            name="prompt_tokens_non_negative",
+        ),
+        CheckConstraint(
+            "completion_tokens IS NULL OR completion_tokens >= 0",
+            name="completion_tokens_non_negative",
+        ),
+        CheckConstraint(
+            "cost_usd IS NULL OR cost_usd >= 0",
+            name="cost_usd_non_negative",
         ),
     )
 
@@ -127,6 +141,15 @@ class AnalysisRun(Base, TimestampMixin):
     ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     ai_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Cost/usage tracking (Iteration 9) ─────────────────────────────────────
+    # Token usage summed across the run's AI calls and the estimated USD cost
+    # derived from it. All nullable: a provider may not report usage, and an
+    # unpriced model leaves cost undefined rather than fabricated. cost_usd uses
+    # Numeric (never Float) for money, with 6 dp to capture sub-cent per-token costs.
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
 
     signals: Mapped[list[Signal]] = relationship(
         back_populates="analysis_run",

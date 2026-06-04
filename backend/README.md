@@ -170,18 +170,27 @@ Goal: aggregate the outcome data into a track record the frontend can chart.
   returning summary + per-style summaries + calibration buckets + equity series,
   in the response envelope.
 
-### Iteration 9 - Smarter, Cheaper, More Reliable AI (18 points)
+### Iteration 9 - Smarter, Cheaper, More Reliable AI (18 points) ✅ DONE
 Goal: close the learning loop and harden the model boundary.
-- [ ] (5) Feedback loop: inject a compact "recent performance on this pair/style
+- [x] (5) Feedback loop: inject a compact "recent performance on this pair/style
   (hit-rate, avg R, confidence bias)" block into `BaseAIProvider._build_user_prompt`
-  so the model calibrates against its *own* real results, not a guess.
-- [ ] (5) Structured output: replace the regex JSON extraction with the provider's
-  native structured output (Anthropic tool-use / forced schema; Groq JSON-mode) so
-  an unparseable reply becomes near-impossible. Keep `_extract_json` as a fallback.
-- [ ] (4) Cost/usage tracking: add `prompt_tokens`, `completion_tokens`, `cost_usd`
-  to `analysis_runs`; capture them from the provider response.
-- [ ] (4) `_complete` returns a small usage result alongside the text so the
-  controller can persist usage without the view or model importing SDK types.
+  so the model calibrates against its *own* real results, not a guess. The
+  controller snapshots the recent closed signals per style
+  (`SignalRepository.list_recent_closed`) and passes a `PriorPerformance` per style
+  on `AnalysisContext`; the block is omitted entirely when there's no history.
+- [x] (5) Structured output: the Anthropic provider now forces a single tool whose
+  `input_schema` is the `DualSignalDraft` JSON schema (`tool_choice` = that tool),
+  so the reply is schema-validated by the API; the tool input is serialised back to
+  JSON so the base's tolerant `_extract_json` + Pydantic validation still runs as
+  defence-in-depth (and as the fallback when no tool block is present). Groq keeps
+  its `response_format=json_object` JSON-mode.
+- [x] (4) Cost/usage tracking: `prompt_tokens`, `completion_tokens` and `cost_usd`
+  (migration `0005`, all nullable, non-negative CHECKs) on `analysis_runs`, captured
+  from each provider response and summed across the run; cost via a small per-model
+  pricing table (`services/ai/pricing.py`, `None` for unpriced models).
+- [x] (4) `_complete` returns a `CompletionResult` (text + optional `TokenUsage`)
+  and `analyze` returns an `AnalysisResult` (dual draft + usage), so the controller
+  persists usage and computes cost without the view or model importing any SDK type.
 
 ### Iteration 10 - Macro / Economic-Calendar Awareness (16 points)
 Goal: make Gold signals aware of the news that actually moves Gold (USD, Fed, CPI).
@@ -820,6 +829,38 @@ shared envelope. In-memory aggregation is the deliberate choice: the closed set
 for the current single-pair focus is small, and a pure calculator is far cheaper
 to trust than hand-rolled aggregate SQL.
 
+### Smarter, cheaper, more reliable AI (Iteration 9 deliverable)
+
+Three changes close the learning loop and harden the model boundary, all without
+leaking an SDK type past the service layer.
+
+**Feedback loop.** The model is now shown its *own* recent results so it can
+calibrate against reality rather than its priors. In the opening transaction the
+controller snapshots each pair's recent closed signals per style
+(`SignalRepository.list_recent_closed`) and folds them into a `PriorPerformance`
+(closed count, win-rate, avg R, and a confidence *bias* = mean stated confidence −
+realised win-rate). These ride on `AnalysisContext` and render as a compact "your
+recent track record on this pair" block in the user prompt — omitted entirely when
+there's no closed history, so the prompt is unchanged for a cold start.
+
+**Structured output.** The provider boundary now returns a `CompletionResult`
+(text + optional `TokenUsage`) from `_complete`, and `analyze` returns an
+`AnalysisResult` (the dual draft + usage). The Anthropic provider forces a single
+tool whose `input_schema` is the `DualSignalDraft` JSON schema, so the API
+validates structure before we ever see the reply; the tool input is serialised
+back to JSON so the base's tolerant extraction + Pydantic validation still runs
+(defence-in-depth, and the fallback when a reply somehow carries no tool block).
+Groq keeps JSON-mode. An unparseable signal is now near-impossible.
+
+**Cost/usage tracking.** Each provider maps its SDK's token counts onto the
+neutral `TokenUsage`; the controller sums them across the run and estimates a USD
+cost via a small per-model pricing table (`services/ai/pricing.py`, fail-soft to
+`None` for an unpriced model or missing usage). The totals land on
+`analysis_runs.prompt_tokens`/`completion_tokens`/`cost_usd` (migration `0005`,
+`cost_usd` is `Numeric(12, 6)` — money is never Float) and are surfaced on
+`AnalysisRunResponse`. The controller only ever touches `TokenUsage` and a
+`Decimal`, so no provider type reaches persistence or the view.
+
 ## 🧪 Run
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -853,19 +894,20 @@ ruff format --check .
 pyright
 ```
 
-### ✅ Verification status (Iterations 1–8)
+### ✅ Verification status (Iterations 1–9)
 Last verified on 2026-06-04:
-- `pytest` — **365 passed** (274 through Iteration 5, then the Iteration 6 candle
-  cache, Iteration 7 outcome evaluator/controller/job, and Iteration 8's
-  performance calculator/controller, repository SQL, and `/performance` route
-  tests)
+- `pytest` — **389 passed** (365 through Iteration 8, then Iteration 9's AI
+  pricing, structured-output / usage provider tests, the feedback-loop and
+  cost-summing controller tests, the `list_recent_closed` repository SQL test, and
+  the `0005` usage-migration tests)
 - `ruff check .` — clean
-- `ruff format --check .` — clean (97 files)
-- `pyright` — clean on the Iteration 8 modules (services/performance, the
-  performance controller, schema, and view)
-- OpenAPI generation exercises every response model, including
-  `PerformanceResponse`, and documents `GET /api/v1/performance` with its
-  `pair`/`signal_type`/`from`/`to` query params
+- `ruff format --check .` — clean (100 files)
+- `alembic upgrade head --sql` renders cleanly through `0005_analysis_run_usage`
+  (single head); the new non-negative CHECK constraints carry the convention's
+  `ck_analysis_runs_…` names
+- `pyright` — clean except one documented Anthropic-SDK stub friction (a plain
+  `dict` tool definition vs the SDK's strict `ToolParam` union); the enforced gate
+  remains `pytest` + `ruff`
 - `create_app()` boots and registers `GET /api/v1/health`
 - `alembic upgrade head --sql` renders the full schema with the three native
   enums created before the tables that reference them

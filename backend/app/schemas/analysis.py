@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel
@@ -44,6 +45,14 @@ class AnalysisRunResponse(BaseModel):
     ai_provider: str | None = None
     ai_model: str | None = None
     error_message: str | None = None
+
+    # AI token usage + estimated cost for the run (Iteration 9). All nullable:
+    # a provider may not report usage, and an unpriced model leaves cost undefined.
+    # ``cost_usd`` is a ``Decimal`` and serialises to a JSON string, like every
+    # money field in the API.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cost_usd: Decimal | None = None
 
 
 class AnalysisRunAccepted(BaseModel):

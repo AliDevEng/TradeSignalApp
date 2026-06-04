@@ -119,6 +119,9 @@ def make_run(
     ai_provider: str | None = "groq",
     ai_model: str | None = "llama-3.3-70b-versatile",
     error_message: str | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    cost_usd: Decimal | None = None,
 ) -> AnalysisRun:
     run = AnalysisRun(
         status=status,
@@ -132,6 +135,9 @@ def make_run(
         ai_provider=ai_provider,
         ai_model=ai_model,
         error_message=error_message,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=cost_usd,
     )
     run.id = id or uuid.uuid4()
     return run

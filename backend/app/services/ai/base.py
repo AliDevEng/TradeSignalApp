@@ -87,6 +87,38 @@ class AIResponseError(AIError):
 
 
 @dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Token counts for one provider call — the basis for cost tracking.
+
+    Both fields are optional because not every provider/response exposes them;
+    a caller treats ``None`` as "unknown" rather than zero. Kept SDK-free (plain
+    ints) so the controller can persist usage without importing any provider type.
+    """
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+    @property
+    def total_tokens(self) -> int | None:
+        if self.prompt_tokens is None and self.completion_tokens is None:
+            return None
+        return (self.prompt_tokens or 0) + (self.completion_tokens or 0)
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionResult:
+    """A raw provider completion: the reply text plus optional token usage.
+
+    ``_complete`` returns this (rather than a bare string) so usage can be
+    threaded back to the controller for cost tracking without the parsing layer
+    or the controller ever importing an SDK response type.
+    """
+
+    text: str
+    usage: TokenUsage | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TimeframeView:
     """One timeframe's evidence: its indicator snapshot + recent candles.
 
@@ -117,6 +149,24 @@ class PriorSignal:
 
 
 @dataclass(frozen=True, slots=True)
+class PriorPerformance:
+    """The pair/style's recent realised track record, fed back to the model.
+
+    This closes the learning loop: instead of guessing how reliable its calls
+    are, the model is shown how its *own* recent signals of this style actually
+    resolved, so it can calibrate confidence against reality. ``confidence_bias``
+    is the mean stated confidence minus the realised win-rate — positive means the
+    style has been over-confident. All ratio fields are ``None`` when there is no
+    closed history yet (``closed == 0``).
+    """
+
+    closed: int
+    win_rate: float | None
+    avg_r: Decimal | None
+    confidence_bias: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisContext:
     """Everything the model needs to reason about one pair, in one place.
 
@@ -143,6 +193,10 @@ class AnalysisContext:
     current_swing: PriorSignal | None = None
     scalp_timeframes: tuple[str, ...] = ()
     swing_timeframes: tuple[str, ...] = ()
+    # The pair's recent realised track record per style (Iteration 9 feedback
+    # loop). ``None`` leaves the performance block out of the prompt entirely.
+    scalp_performance: PriorPerformance | None = None
+    swing_performance: PriorPerformance | None = None
 
 
 class SignalDraft(BaseModel):
@@ -207,14 +261,27 @@ class DualSignalDraft(BaseModel):
     swing: SignalDraft
 
 
+@dataclass(frozen=True, slots=True)
+class AnalysisResult:
+    """The provider's full output for one pair: the dual draft + token usage.
+
+    ``analyze`` returns this so the controller gets the signals *and* the usage
+    it needs for cost tracking, without importing any SDK type. ``usage`` is
+    ``None`` when the provider didn't report token counts.
+    """
+
+    dual: DualSignalDraft
+    usage: TokenUsage | None = None
+
+
 class AIProvider(abc.ABC):
-    """Turns an :class:`AnalysisContext` into a :class:`DualSignalDraft`."""
+    """Turns an :class:`AnalysisContext` into an :class:`AnalysisResult`."""
 
     provider_name: str
     model: str
 
     @abc.abstractmethod
-    async def analyze(self, context: AnalysisContext) -> DualSignalDraft: ...
+    async def analyze(self, context: AnalysisContext) -> AnalysisResult: ...
 
     @abc.abstractmethod
     async def aclose(self) -> None:
@@ -229,15 +296,15 @@ class BaseAIProvider(AIProvider):
     identical across providers.
     """
 
-    async def analyze(self, context: AnalysisContext) -> DualSignalDraft:
+    async def analyze(self, context: AnalysisContext) -> AnalysisResult:
         system = self._build_system_prompt()
         user = self._build_user_prompt(context)
-        raw = await self._complete(system=system, user=user)
-        dual = self._parse_response(raw)
+        completion = await self._complete(system=system, user=user)
+        dual = self._parse_response(completion.text)
         self._assert_actionable(dual.scalp, style="scalp")
         self._assert_actionable(dual.swing, style="swing")
         logger.info(
-            "AI signals for %s: scalp=%s (%.2f) swing=%s (%.2f) via %s/%s",
+            "AI signals for %s: scalp=%s (%.2f) swing=%s (%.2f) via %s/%s (tokens=%s)",
             context.symbol,
             dual.scalp.direction,
             dual.scalp.confidence,
@@ -245,15 +312,17 @@ class BaseAIProvider(AIProvider):
             dual.swing.confidence,
             self.provider_name,
             self.model,
+            completion.usage.total_tokens if completion.usage else "n/a",
         )
-        return dual
+        return AnalysisResult(dual=dual, usage=completion.usage)
 
     @abc.abstractmethod
-    async def _complete(self, *, system: str, user: str) -> str:
-        """Send the prompt to the provider and return the raw text reply.
+    async def _complete(self, *, system: str, user: str) -> CompletionResult:
+        """Send the prompt to the provider and return the reply text + usage.
 
         Implementations must translate provider/transport exceptions into
-        :class:`AIRequestError` so callers only ever catch the service base.
+        :class:`AIRequestError` so callers only ever catch the service base, and
+        should attach a :class:`TokenUsage` when the response reports one.
         """
 
     # ── Prompt construction ──────────────────────────────────────────────
@@ -319,6 +388,7 @@ class BaseAIProvider(AIProvider):
         order = ", ".join(v.timeframe for v in views)
         framing = self._render_framing(context)
         prior = self._render_prior_signals(context)
+        performance = self._render_performance(context)
         return (
             f"Instrument: {context.symbol}\n"
             f"Primary (decision) timeframe: {context.primary_timeframe}\n"
@@ -327,8 +397,43 @@ class BaseAIProvider(AIProvider):
             + "\n\n"
             + "\n\n".join(blocks)
             + f"\n\n{prior}"
+            + performance
             + "\n\nPerform a top-down multi-timeframe analysis and return the JSON "
             "object with both a scalp and a swing signal now."
+        )
+
+    @staticmethod
+    def _render_performance(context: AnalysisContext) -> str:
+        """Render the pair's recent realised track record so the model can learn.
+
+        Omitted entirely (empty string) when neither style has performance data,
+        so the prompt is unchanged for callers that don't supply it. When present,
+        it nudges the model to calibrate confidence against its own results rather
+        than its priors.
+        """
+        scalp = context.scalp_performance
+        swing = context.swing_performance
+        if scalp is None and swing is None:
+            return ""
+
+        def one(label: str, perf: PriorPerformance | None) -> str:
+            if perf is None or perf.closed == 0:
+                return f"- {label}: no closed history yet."
+            win = f"{perf.win_rate * 100:.0f}%" if perf.win_rate is not None else "n/a"
+            avg_r = f"{perf.avg_r:+.2f}R" if perf.avg_r is not None else "n/a"
+            bias = ""
+            if perf.confidence_bias is not None:
+                pp = perf.confidence_bias * 100
+                tone = "over-confident" if pp > 0 else "under-confident"
+                bias = f" | confidence bias {pp:+.0f}pp ({tone})"
+            return f"- {label}: {perf.closed} closed | win-rate {win} | avg {avg_r}{bias}"
+
+        return (
+            "\n\nYour recent track record on this pair (LEARN from it — if a style "
+            "has been over-confident, lower its confidence; if its win-rate is poor, "
+            "be more selective or rethink the bias):\n"
+            f"{one('SCALP', scalp)}\n"
+            f"{one('SWING', swing)}"
         )
 
     @staticmethod

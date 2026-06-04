@@ -202,6 +202,34 @@ class SignalRepository(BaseRepository[Signal]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def list_recent_closed(
+        self,
+        *,
+        pair_id: int,
+        signal_type: SignalType | None = None,
+        limit: int = 20,
+    ) -> Sequence[Signal]:
+        """The most-recent closed, R-scored signals for a pair, newest first.
+
+        Backs the Iteration 9 feedback loop: the analysis controller summarises
+        these into the "your recent track record" block fed back to the model.
+        Same scored set as the performance API (terminal outcome *and* a defined
+        ``realized_r``), but bounded and newest-first so the feedback reflects
+        *recent* behaviour rather than the whole history.
+        """
+        if limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        stmt = select(Signal).where(
+            Signal.outcome != SignalOutcome.OPEN,
+            Signal.realized_r.is_not(None),
+        )
+        if signal_type is not None:
+            stmt = stmt.where(Signal.signal_type == signal_type)
+        stmt = stmt.where(Signal.pair_id == pair_id)
+        stmt = stmt.order_by(desc(Signal.closed_at)).limit(limit)
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
     async def list_for_run(self, analysis_run_id: uuid.UUID) -> Sequence[Signal]:
         """All signals produced by a single analysis run, ordered by pair.
 

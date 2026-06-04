@@ -71,6 +71,20 @@ async def test_get_run_returns_mapped_response():
     assert result.pairs_failed == 1
 
 
+async def test_get_run_surfaces_usage_and_cost():
+    from decimal import Decimal
+
+    run = make_run(prompt_tokens=200, completion_tokens=100, cost_usd=Decimal("0.000197"))
+    ctrl, runs = _controller()
+    runs.get.return_value = run
+
+    result = await ctrl.get_run(run.id)
+
+    assert result.prompt_tokens == 200
+    assert result.completion_tokens == 100
+    assert result.cost_usd == Decimal("0.000197")
+
+
 async def test_get_run_missing_raises_not_found():
     ctrl, runs = _controller()
     runs.get.return_value = None

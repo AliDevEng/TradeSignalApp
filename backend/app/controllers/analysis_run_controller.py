@@ -71,4 +71,7 @@ class AnalysisRunController:
             ai_provider=run.ai_provider,
             ai_model=run.ai_model,
             error_message=run.error_message,
+            prompt_tokens=run.prompt_tokens,
+            completion_tokens=run.completion_tokens,
+            cost_usd=run.cost_usd,
         )
