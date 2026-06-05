@@ -12,10 +12,12 @@ controller unit tests already cover.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
 from app.controllers.analysis_run_controller import AnalysisRunController
+from app.models import AnalysisRunStatus
 from app.controllers.exceptions import ResourceNotFoundError
 from app.controllers.pair_controller import PairController
 from app.controllers.performance_controller import PerformanceController
@@ -346,6 +348,47 @@ async def test_list_run_signals(client, signals_ctrl):
     assert resp.status_code == 200
     assert len(resp.json()["data"]) == 1
     signals_ctrl.list_for_run.assert_awaited_once_with(run_id)
+
+
+# ── GET /analysis/status ─────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def scheduler_stub(app):
+    """Stub the scheduler dependency with a fixed next-run time."""
+    from app.dependencies import get_scheduler
+
+    mock = AsyncMock()
+    mock.next_run_at = lambda _job_id: datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+    app.dependency_overrides[get_scheduler] = lambda: mock
+    return mock
+
+
+async def test_pipeline_status_running_when_latest_run_in_flight(
+    client, runs_ctrl, scheduler_stub
+):
+    running = AnalysisRunController._to_response(make_run(status=AnalysisRunStatus.RUNNING))
+    runs_ctrl.get_latest.return_value = running
+
+    resp = await client.get("/api/v1/analysis/status")
+    body = resp.json()
+
+    assert resp.status_code == 200
+    assert body["data"]["state"] == "running"
+    assert body["data"]["next_run_at"] is not None
+    assert body["data"]["last_run"]["id"] == str(running.id)
+
+
+async def test_pipeline_status_idle_with_no_runs_yet(client, runs_ctrl, scheduler_stub):
+    runs_ctrl.get_latest.return_value = None
+
+    resp = await client.get("/api/v1/analysis/status")
+    body = resp.json()
+
+    assert resp.status_code == 200
+    assert body["data"]["state"] == "idle"
+    assert body["data"]["last_run"] is None
+    assert body["data"]["interval_minutes"] >= 1
 
 
 # ── POST /analysis/runs ──────────────────────────────────────────────────────

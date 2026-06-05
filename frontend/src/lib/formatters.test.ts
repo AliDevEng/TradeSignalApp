@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatCountdown,
   formatIndicator,
   formatRelativeTime,
+  formatRiskReward,
   formatSignedPercent,
   getPricePrecision
 } from "@/lib/formatters";
@@ -42,6 +44,40 @@ describe("formatIndicator", () => {
 
   it("uses fine precision for sub-unit FX values", () => {
     expect(formatIndicator(1.0836)).toBe("1.08360");
+  });
+});
+
+describe("formatRiskReward", () => {
+  it("drops the decimal when the ratio rounds to a whole number", () => {
+    expect(formatRiskReward(2.04)).toBe("2");
+    expect(formatRiskReward(2.02)).toBe("2");
+    expect(formatRiskReward(2)).toBe("2");
+  });
+
+  it("keeps a single decimal when meaningful", () => {
+    expect(formatRiskReward(2.1)).toBe("2.1");
+    expect(formatRiskReward(2.15)).toBe("2.2");
+    expect(formatRiskReward(0.82)).toBe("0.8");
+  });
+});
+
+describe("formatCountdown", () => {
+  it("formats minutes and seconds", () => {
+    expect(formatCountdown(12 * 60_000 + 30_000)).toBe("12m 30s");
+  });
+
+  it("formats sub-minute durations as seconds only", () => {
+    expect(formatCountdown(45_000)).toBe("45s");
+  });
+
+  it("formats long cadences with hours", () => {
+    expect(formatCountdown(60 * 60_000 + 5 * 60_000)).toBe("1h 5m");
+  });
+
+  it("collapses elapsed or invalid durations", () => {
+    expect(formatCountdown(0)).toBe("any moment now");
+    expect(formatCountdown(-1_000)).toBe("any moment now");
+    expect(formatCountdown(Number.NaN)).toBe("any moment now");
   });
 });
 

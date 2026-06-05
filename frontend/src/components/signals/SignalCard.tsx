@@ -9,7 +9,13 @@ import {
   TradeStyleBadge
 } from "@/components/signals/SignalBadge";
 import { Card } from "@/components/ui/Card";
-import { formatPercent, formatPrice, formatTime, getPricePrecision } from "@/lib/formatters";
+import {
+  formatPercent,
+  formatPrice,
+  formatRiskReward,
+  formatTime,
+  getPricePrecision
+} from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { Signal } from "@/types/signal";
 
@@ -94,7 +100,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
                 R:R
               </p>
               <p className="mt-1 text-xl font-semibold text-[var(--blue-strong)]">
-                {signal.riskReward ? `${signal.riskReward.toFixed(2)} : 1` : "Hold"}
+                {signal.riskReward ? `${formatRiskReward(signal.riskReward)} : 1` : "Hold"}
               </p>
             </div>
           </div>

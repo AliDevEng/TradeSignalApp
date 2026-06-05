@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from apscheduler.job import Job
@@ -111,3 +112,13 @@ class Scheduler:
 
     def get_job(self, job_id: str) -> Job | None:
         return self._scheduler.get_job(job_id)
+
+    def next_run_at(self, job_id: str) -> datetime | None:
+        """When ``job_id`` is next scheduled to fire, or ``None``.
+
+        ``None`` covers every "no upcoming run" case uniformly: the job isn't
+        registered, the scheduler hasn't started, or the job is paused. The
+        returned datetime is timezone-aware (the scheduler's tz).
+        """
+        job = self.get_job(job_id)
+        return getattr(job, "next_run_time", None) if job is not None else None

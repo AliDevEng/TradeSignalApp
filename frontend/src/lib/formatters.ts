@@ -36,6 +36,40 @@ export function formatDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+/**
+ * Risk-to-reward ratio for display: at most one decimal, and a whole number
+ * when the fraction rounds away. So 2.04 → "2", 2.02 → "2", 2.15 → "2.2",
+ * 2.1 → "2.1". Callers append the " : 1" suffix where the layout wants it.
+ */
+export function formatRiskReward(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return rounded.toFixed(1).replace(/\.0$/, "");
+}
+
+/**
+ * Compact "time remaining" label from a millisecond duration, e.g. "12m 30s",
+ * "45s", or "1h 5m" for long cadences. Non-positive/invalid input collapses to
+ * "any moment now" — the countdown has effectively elapsed.
+ */
+export function formatCountdown(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "any moment now";
+  }
+
+  const totalSeconds = Math.ceil(ms / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
 export function getPricePrecision(symbol: string): number {
   if (symbol.includes("JPY")) {
     return 3;

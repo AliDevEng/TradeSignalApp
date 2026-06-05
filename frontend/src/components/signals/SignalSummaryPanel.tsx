@@ -2,7 +2,7 @@ import { Activity, BarChart3, ShieldCheck, Target, TrendingUp, type LucideIcon }
 
 import { OutcomeBadge, SignalBadge, SignalStatusBadge } from "@/components/signals/SignalBadge";
 import { Card, CardContent } from "@/components/ui/Card";
-import { formatPercent, formatPrice, getPricePrecision } from "@/lib/formatters";
+import { formatPercent, formatPrice, formatRiskReward, getPricePrecision } from "@/lib/formatters";
 import type { Signal } from "@/types/signal";
 
 type SignalSummaryPanelProps = {
@@ -48,7 +48,7 @@ export function SignalSummaryPanel({ signal }: SignalSummaryPanelProps) {
             icon={TrendingUp}
             label="Risk / Reward"
             tone="info"
-            value={signal.riskReward !== null ? signal.riskReward.toFixed(2) : "Pending"}
+            value={signal.riskReward !== null ? `${formatRiskReward(signal.riskReward)} : 1` : "Pending"}
           />
           <SignalMetric
             icon={Target}

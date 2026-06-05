@@ -73,28 +73,69 @@ task lists live in `backend/README.md` (Iterations 6-11) and `frontend/README.md
 | 6 | 🛡️ Risk & position sizing | It. 11 | It. 12 |
 
 ## 🏁 Quick Start Order
-1. 📦 Set up backend dependencies and env
-2. 🗄️ Start PostgreSQL
-3. 🔌 Run backend API
-4. 🌐 Set up frontend dependencies and env
-5. 🧪 Build features iteration by iteration
+1. 🗄️ Start PostgreSQL and make sure `backend/.env` points at it
+2. 📦 Install backend dependencies and apply migrations
+3. 🔌 Run the backend API on <http://localhost:8000>
+4. 🌐 Install frontend dependencies
+5. ▶️ Run the frontend on <http://localhost:3000>
 
 ## ▶️ Current Run Flow
+Open two terminals from the repo root: one for the backend and one for the
+frontend.
+
 ### ⚙️ Backend
+Create `backend/.env` from `backend/.env.example`, then fill in at least
+`DATABASE_URL`. Add `AI_API_KEY` and `TWELVE_DATA_API_KEY` when you want live
+analysis instead of local/test-only flows.
+
+#### Bash (Git Bash on Windows)
 ```bash
 cd backend
+[ -f .env ] || cp .env.example .env
 python -m venv .venv
-.venv\Scripts\activate
+source .venv/Scripts/activate
 python -m pip install --upgrade pip
 pip install -r requirements-dev.txt
+alembic upgrade head
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+#### PowerShell
+```powershell
+Set-Location backend
+if (-not (Test-Path .\.env)) { Copy-Item .\.env.example .\.env }
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements-dev.txt
+alembic upgrade head
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Backend checks:
+- 🩺 Health: <http://localhost:8000/api/v1/health>
+- 📚 Swagger UI: <http://localhost:8000/api/docs>
+
 ### 🌐 Frontend
+The frontend reads the API URL from `frontend/.env.local`. For local development,
+use `NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1`.
+
+#### Bash
 ```bash
 cd frontend
 npm install
 npm run dev -- --hostname 127.0.0.1 --port 3000
 ```
+
+#### PowerShell
+```powershell
+Set-Location frontend
+npm install
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+Frontend app:
+- 🖥️ <http://localhost:3000>
 
 ## 🧪 Current Verification
 - ✅ Frontend passes `npm run check` (typecheck + lint + Vitest + build); Playwright route-smoke in `e2e/`

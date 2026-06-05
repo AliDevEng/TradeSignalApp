@@ -132,3 +132,18 @@ export type ApiAnalysisRun = {
   ai_model: string | null;
   error_message: string | null;
 };
+
+/** Coarse pipeline state from `GET /api/v1/analysis/status`. */
+export type ApiPipelineState = "idle" | "running" | "disabled";
+
+/**
+ * Live analysis-pipeline status backing the "next signal" UI. `next_run_at` is
+ * the scheduler's authoritative next fire time (null when the scheduler is off
+ * or has no upcoming run); `last_run` gives context for the idle/running copy.
+ */
+export type ApiPipelineStatus = {
+  state: ApiPipelineState;
+  interval_minutes: number;
+  next_run_at: string | null;
+  last_run: ApiAnalysisRun | null;
+};

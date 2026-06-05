@@ -25,15 +25,10 @@ from app.services.market_data import (
     MarketDataProvider,
     build_market_data_provider,
 )
-from app.tasks import AnalysisJob, OutcomeJob, Scheduler
+from app.tasks import ANALYSIS_JOB_ID, OUTCOME_JOB_ID, AnalysisJob, OutcomeJob, Scheduler
 from app.views import api_v1_router
 
 logger = logging.getLogger(__name__)
-
-#: Stable scheduler job ids — kept as constants so health checks / future
-#: admin endpoints can reference the same jobs without string drift.
-ANALYSIS_JOB_ID = "analysis-cycle"
-OUTCOME_JOB_ID = "outcome-cycle"
 
 
 def _build_database(settings: Settings) -> Database:

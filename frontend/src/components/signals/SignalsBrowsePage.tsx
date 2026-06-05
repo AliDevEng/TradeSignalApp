@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { RefreshCw, X } from "lucide-react";
 
 import { RelativeTime } from "@/components/common/RelativeTime";
+import { PipelineStatusBanner } from "@/components/signals/PipelineStatusBanner";
 import { SignalCard } from "@/components/signals/SignalCard";
 import { SignalFilters } from "@/components/signals/SignalFilters";
 import { SignalListSkeleton } from "@/components/signals/SignalListSkeleton";
@@ -80,6 +81,8 @@ export function SignalsBrowsePage() {
           Refresh
         </Button>
       </div>
+
+      <PipelineStatusBanner />
 
       {runParam ? (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#234f86] bg-[var(--blue-soft)] px-4 py-3">

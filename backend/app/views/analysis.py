@@ -14,21 +14,28 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Query, status
 
+from app.config import SettingsDep
 from app.dependencies import (
     AnalysisControllerDep,
     AnalysisRunControllerDep,
     PaginationDep,
+    SchedulerDep,
     SignalControllerDep,
 )
 from app.schemas.analysis import (
     AnalysisRunAccepted,
     AnalysisRunResponse,
     AnalysisRunStatusLiteral,
+    PipelineStatusResponse,
 )
 from app.schemas.common import APIResponse, PaginatedResponse, PaginationMeta
 from app.schemas.signal import SignalResponse
+from app.tasks import ANALYSIS_JOB_ID
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
+
+#: Run statuses that mean a cycle is actively in flight (vs. a terminal status).
+_IN_FLIGHT_STATUSES = frozenset({"pending", "running"})
 
 
 @router.get(
@@ -57,6 +64,43 @@ async def list_runs(
             page=pagination.page,
             per_page=pagination.per_page,
         ),
+    )
+
+
+@router.get(
+    "/status",
+    response_model=APIResponse[PipelineStatusResponse],
+    summary="Live pipeline status + next scheduled run (for the 'next signal' UI)",
+)
+async def pipeline_status(
+    controller: AnalysisRunControllerDep,
+    scheduler: SchedulerDep,
+    settings: SettingsDep,
+) -> APIResponse[PipelineStatusResponse]:
+    """Snapshot the pipeline so the UI can show progress and a countdown.
+
+    ``state`` is derived rather than stored: the scheduler being switched off
+    wins ("disabled"); otherwise a non-terminal latest run means a cycle is
+    "running"; else we're "idle" between runs. ``next_run_at`` comes straight
+    from the scheduler — the authoritative next fire time, which also stays
+    correct across restarts, misfires, and manual triggers.
+    """
+    latest = await controller.get_latest()
+
+    if not settings.scheduler_enabled:
+        state = "disabled"
+    elif latest is not None and latest.status in _IN_FLIGHT_STATUSES:
+        state = "running"
+    else:
+        state = "idle"
+
+    return APIResponse(
+        data=PipelineStatusResponse(
+            state=state,
+            interval_minutes=settings.analysis_interval_minutes,
+            next_run_at=scheduler.next_run_at(ANALYSIS_JOB_ID),
+            last_run=latest,
+        )
     )
 
 

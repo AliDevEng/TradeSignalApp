@@ -49,6 +49,15 @@ class AnalysisRunController:
         rows = await self._runs.list_paginated(offset=offset, limit=limit, status=status_enum)
         return Page(items=[self._to_response(run) for run in rows], total=total)
 
+    async def get_latest(self) -> AnalysisRunResponse | None:
+        """The most-recent run of any status, or ``None`` if none exist yet.
+
+        Backs the pipeline-status endpoint: its status tells the UI whether a
+        cycle is in flight, and its timestamps give context for the countdown.
+        """
+        rows = await self._runs.list_recent(limit=1)
+        return self._to_response(rows[0]) if rows else None
+
     async def get_run(self, run_id: uuid.UUID) -> AnalysisRunResponse:
         """A single run by id, or :class:`ResourceNotFoundError` if absent."""
         run = await self._runs.get(run_id)

@@ -4,6 +4,7 @@ import type {
   ApiAnalysisRun,
   ApiAnalysisRunStatus,
   ApiPair,
+  ApiPipelineStatus,
   ApiSignal,
   ApiSignalType
 } from "@/types/tradeApi";
@@ -75,6 +76,11 @@ export async function getAnalysisRuns(
   });
 
   return response.data;
+}
+
+export async function getPipelineStatus(): Promise<ApiPipelineStatus> {
+  const response = await apiClient.get<ApiSuccessResponse<ApiPipelineStatus>>("/analysis/status");
+  return response.data.data;
 }
 
 export async function getAnalysisRun(runId: string): Promise<ApiAnalysisRun> {

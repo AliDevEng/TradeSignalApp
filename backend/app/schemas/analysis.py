@@ -25,6 +25,11 @@ from pydantic import BaseModel
 AnalysisRunStatusLiteral = Literal["pending", "running", "success", "partial", "failed"]
 AnalysisRunTriggerLiteral = Literal["scheduler", "manual"]
 
+# The coarse pipeline state the UI cares about, derived from the scheduler and
+# the latest run: a cycle is in flight, the schedule is idle between runs, or
+# the scheduler is switched off entirely.
+PipelineStateLiteral = Literal["idle", "running", "disabled"]
+
 
 class AnalysisRunResponse(BaseModel):
     """A single pipeline run as surfaced by the API."""
@@ -53,6 +58,24 @@ class AnalysisRunResponse(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     cost_usd: Decimal | None = None
+
+
+class PipelineStatusResponse(BaseModel):
+    """Live status of the analysis pipeline for the dashboard "next signal" UI.
+
+    Combines two sources of truth: the scheduler (when the next cycle fires)
+    and the run ledger (whether one is in flight right now, plus context from
+    the last completed run). The frontend renders a "processing" banner while
+    ``state == "running"`` and a countdown to ``next_run_at`` otherwise.
+    """
+
+    state: PipelineStateLiteral
+    interval_minutes: int
+    #: When the next scheduled cycle fires. ``None`` if the scheduler is off or
+    #: has no upcoming run; the UI then hides the countdown.
+    next_run_at: datetime | None = None
+    #: The most-recent run for context (status, finished_at, signal counts).
+    last_run: AnalysisRunResponse | None = None
 
 
 class AnalysisRunAccepted(BaseModel):

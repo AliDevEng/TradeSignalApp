@@ -12,6 +12,7 @@ import {
   getAnalysisRun,
   getAnalysisRuns,
   getPairs,
+  getPipelineStatus,
   getRunSignals,
   getSignal,
   getSignals,
@@ -26,7 +27,11 @@ import type { TradingPair } from "@/types/signal";
 export const REFETCH_INTERVALS = {
   signals: 30_000,
   analysisRuns: 20_000,
-  performance: 60_000
+  performance: 60_000,
+  // The pipeline status feeds a live countdown, so we re-sync with the
+  // scheduler's authoritative next-run time a little more eagerly than the
+  // run list. The countdown itself ticks client-side between fetches.
+  pipelineStatus: 15_000
 } as const;
 
 const DASHBOARD_PAGE_SIZE = 20;
@@ -38,6 +43,7 @@ export const tradeQueryKeys = {
   signalsInfinite: (params: SignalListParams) => ["signals", "infinite", params] as const,
   signal: (signalId: string) => ["signal", signalId] as const,
   analysisRuns: (params: AnalysisRunListParams) => ["analysis-runs", params] as const,
+  pipelineStatus: ["pipeline-status"] as const,
   analysisRun: (runId: string) => ["analysis-run", runId] as const,
   runSignals: (runId: string) => ["analysis-run", runId, "signals"] as const,
   performance: (params: PerformanceParams) => ["performance", params] as const
@@ -162,6 +168,22 @@ export function useAnalysisRunsQuery(params: AnalysisRunListParams = {}) {
     retry: 1,
     staleTime: 15_000,
     refetchInterval: REFETCH_INTERVALS.analysisRuns
+  });
+}
+
+/**
+ * Live analysis-pipeline status (in-flight vs. idle + next scheduled run),
+ * polled on a short cadence so the dashboard countdown stays in sync with the
+ * backend scheduler. `retry: false` keeps a transient API blip from flapping
+ * the banner — the next poll recovers it.
+ */
+export function usePipelineStatusQuery() {
+  return useQuery({
+    queryKey: tradeQueryKeys.pipelineStatus,
+    queryFn: getPipelineStatus,
+    retry: false,
+    staleTime: 10_000,
+    refetchInterval: REFETCH_INTERVALS.pipelineStatus
   });
 }
 

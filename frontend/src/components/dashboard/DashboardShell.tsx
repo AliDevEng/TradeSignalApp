@@ -4,6 +4,7 @@ import { BarChart3, Bot, Layers3, LineChart, RefreshCw, Sparkles } from "lucide-
 
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { HealthPanel } from "@/components/health/HealthPanel";
+import { PipelineStatusBanner } from "@/components/signals/PipelineStatusBanner";
 import { SignalList } from "@/components/signals/SignalList";
 import { SignalListSkeleton } from "@/components/signals/SignalListSkeleton";
 import { Badge } from "@/components/ui/Badge";
@@ -199,6 +200,8 @@ export function DashboardShell() {
               </div>
               <DensitySwitch density={density} setDensity={setDensity} />
             </div>
+
+            <PipelineStatusBanner />
 
             {isPreviewData && apiError ? (
               <ErrorState
