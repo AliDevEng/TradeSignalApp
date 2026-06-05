@@ -6,9 +6,8 @@ import { SignalCard } from "@/components/signals/SignalCard";
 import { SignalFilters } from "@/components/signals/SignalFilters";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { useSignalFilters } from "@/hooks/useSignalFilters";
 import { refineSignals } from "@/lib/signalFilters";
-import { useSignalStore } from "@/store/signalStore";
-import { useUIStore } from "@/store/uiStore";
 import type { Signal, TradingPair } from "@/types/signal";
 
 type SignalListProps = {
@@ -17,18 +16,11 @@ type SignalListProps = {
 };
 
 export function SignalList({ signals, pairs }: SignalListProps) {
-  const direction = useSignalStore((state) => state.direction);
-  const tradeStyle = useSignalStore((state) => state.tradeStyle);
-  const status = useSignalStore((state) => state.status);
-  const outcome = useSignalStore((state) => state.outcome);
-  const pair = useSignalStore((state) => state.pair);
-  const sort = useSignalStore((state) => state.sort);
-  const reset = useSignalStore((state) => state.reset);
-  const density = useUIStore((state) => state.density);
+  const { filters, reset } = useSignalFilters();
 
   const filteredSignals = useMemo(
-    () => refineSignals(signals, { direction, tradeStyle, status, outcome, pair, sort }),
-    [signals, direction, tradeStyle, status, outcome, pair, sort]
+    () => refineSignals(signals, filters),
+    [signals, filters]
   );
 
   return (
@@ -37,7 +29,7 @@ export function SignalList({ signals, pairs }: SignalListProps) {
       <div className="grid gap-4">
         {filteredSignals.length > 0 ? (
           filteredSignals.map((signal) => (
-            <SignalCard density={density} key={signal.id} signal={signal} />
+            <SignalCard density="comfortable" key={signal.id} signal={signal} />
           ))
         ) : (
           <EmptyState

@@ -6,12 +6,12 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
-  Bot,
   ChevronRight,
   CircleCheckBig,
   Command,
   Gauge,
   LineChart,
+  Menu,
   Radar,
   ShieldCheck
 } from "lucide-react";
@@ -101,7 +101,6 @@ export function AppShell({ children }: AppShellProps) {
   const toggleCommandPalette = useUIStore((state) => state.toggleCommandPalette);
   const setLastPath = useUIStore((state) => state.setLastPath);
 
-  // Remember the last visited route and record a pageview on each navigation.
   useEffect(() => {
     setLastPath(pathname);
     track({ name: "pageview", path: pathname });
@@ -115,32 +114,34 @@ export function AppShell({ children }: AppShellProps) {
       >
         Skip to content
       </a>
-      <header className="sticky top-0 z-30 border-b border-[#2b2415] bg-[rgba(9,11,16,0.94)] backdrop-blur-xl">
-        <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Link className="flex items-center gap-3" href="/dashboard">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#6f5620] bg-[#151006] text-[var(--gold-strong)] shadow-[0_0_24px_rgba(216,175,79,0.16)]">
+      <header className="sticky top-0 z-30 border-b border-[#253047] bg-[rgba(9,11,16,0.92)] shadow-[0_16px_40px_rgba(0,0,0,0.24)] backdrop-blur-xl">
+        <div className="mx-auto flex min-h-16 w-full max-w-[1480px] items-center justify-between gap-3 px-3 sm:px-5">
+          <Link className="flex min-w-0 items-center gap-3" href="/dashboard">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#6f5620] bg-[#151006] text-[var(--gold-strong)] shadow-[0_0_24px_rgba(216,175,79,0.16)]">
               <Radar className="h-5 w-5" />
             </div>
-            <div>
-              <p className="text-sm font-semibold text-[#fff8df]">{env.NEXT_PUBLIC_APP_NAME}</p>
-              <p className="text-xs text-[#99a3b4]">AI market command</p>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-[#fff8df]">
+                {env.NEXT_PUBLIC_APP_NAME}
+              </p>
+              <p className="hidden text-xs text-[#99a3b4] sm:block">AI market command</p>
             </div>
           </Link>
 
-          <nav className="hidden items-center rounded-lg border border-[#293244] bg-[#101722] p-1 md:flex">
-            {navigationItems.slice(0, 3).map((item) => {
+          <nav className="hidden items-center rounded-lg border border-[#293244] bg-[#101722] p-1 lg:flex">
+            {navigationItems.slice(0, 5).map((item) => {
               const Icon = item.icon;
               const isActive = isActiveRoute(pathname, item.href);
 
               return (
                 <Link
+                  aria-current={isActive ? "page" : undefined}
                   className={cn(
                     "flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors",
                     isActive
                       ? "bg-[var(--gold)] text-[#080a0f]"
                       : "text-[#9aa4b2] hover:bg-[#182132] hover:text-[#fff8df]"
                   )}
-                  aria-current={isActive ? "page" : undefined}
                   href={item.href}
                   key={item.href}
                 >
@@ -159,19 +160,46 @@ export function AppShell({ children }: AppShellProps) {
               variant="secondary"
             >
               <Command className="h-4 w-4" />
-              <span className="hidden text-xs text-[var(--muted)] sm:inline">⌘K</span>
+              <span className="hidden text-xs text-[var(--muted)] sm:inline">Ctrl K</span>
             </Button>
             <NotificationBell />
           </div>
         </div>
+
+        <nav
+          aria-label="Primary"
+          className="mx-auto flex w-full max-w-[1480px] gap-2 overflow-x-auto px-3 pb-3 sm:px-5 lg:hidden"
+        >
+          {navigationItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = isActiveRoute(pathname, item.href);
+
+            return (
+              <Link
+                aria-current={isActive ? "page" : undefined}
+                className={cn(
+                  "inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors",
+                  isActive
+                    ? "border-[#8f6a20] bg-[var(--gold)] text-[#080a0f]"
+                    : "border-[#263247] bg-[#101722] text-[#a5afbf] hover:border-[#4d5c73] hover:text-[#fff8df]"
+                )}
+                href={item.href}
+                key={item.href}
+              >
+                <Icon aria-hidden className="h-4 w-4" />
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
       </header>
 
-      <div className="mx-auto grid w-full max-w-7xl gap-5 px-4 py-6 sm:px-6 lg:grid-cols-[260px_1fr]">
-        <aside className="hidden lg:block">
+      <div className="mx-auto grid w-full max-w-[1480px] gap-5 px-3 py-5 sm:px-5 xl:grid-cols-[220px_minmax(0,1fr)]">
+        <aside className="hidden xl:block">
           <div className="sticky top-24 space-y-3">
             <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] p-3 shadow-[var(--surface-shadow)]">
               <div className="mb-3 flex items-center gap-2 px-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                <Bot className="h-4 w-4 text-[var(--gold)]" />
+                <Menu className="h-4 w-4 text-[var(--gold)]" />
                 Workspace
               </div>
               <nav className="space-y-1" aria-label="Primary">
@@ -181,13 +209,13 @@ export function AppShell({ children }: AppShellProps) {
 
                   return (
                     <Link
+                      aria-current={isActive ? "page" : undefined}
                       className={cn(
                         "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold transition-colors",
                         isActive
                           ? "bg-[#201a0d] text-[var(--gold-strong)]"
                           : "text-[#a5afbf] hover:bg-[#182132] hover:text-[#fff8df]"
                       )}
-                      aria-current={isActive ? "page" : undefined}
                       href={item.href}
                       key={item.href}
                     >

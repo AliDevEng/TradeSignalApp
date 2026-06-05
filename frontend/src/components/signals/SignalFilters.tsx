@@ -30,9 +30,9 @@ const outcomeLabels: Record<SignalFilterValues["outcome"], string> = {
 };
 
 const selectClass =
-  "h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]";
+  "h-10 min-w-0 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]";
 const labelClass =
-  "grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]";
+  "grid min-w-0 gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]";
 
 function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -48,7 +48,7 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
   const { filters, setFilters, reset } = useSignalFilters();
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4 shadow-[var(--surface-shadow)]">
+    <div className="flex min-w-0 flex-col gap-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-4 py-4 shadow-[var(--surface-shadow)] sm:px-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="h-4 w-4 text-[var(--gold)]" />
@@ -60,7 +60,7 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
         </Button>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_180px]">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[repeat(5,minmax(0,1fr))_180px]">
         <label className={labelClass}>
           Direction
           <select

@@ -18,7 +18,6 @@ import { useSignalFilters, toSignalListParams } from "@/hooks/useSignalFilters";
 import { useInfiniteSignalsQuery } from "@/hooks/useTradeQueries";
 import { PREVIEW_DATA_ENABLED } from "@/lib/env";
 import { signals as mockSignals, tradingPairs } from "@/lib/mockSignals";
-import { useUIStore } from "@/store/uiStore";
 import type { Signal } from "@/types/signal";
 
 const emptySignals: Signal[] = [];
@@ -37,7 +36,6 @@ export function SignalsBrowsePage() {
     runId: runParam ?? undefined
   });
 
-  const density = useUIStore((state) => state.density);
   const hasMounted = useSyncExternalStore(
     subscribeToHydration,
     () => true,
@@ -113,7 +111,7 @@ export function SignalsBrowsePage() {
       ) : visibleSignals.length > 0 ? (
         <div className="grid gap-4">
           {visibleSignals.map((signal) => (
-            <SignalCard density={density} key={signal.id} signal={signal} />
+            <SignalCard density="comfortable" key={signal.id} signal={signal} />
           ))}
         </div>
       ) : (

@@ -34,15 +34,19 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
     <Card className="overflow-hidden transition-colors hover:border-[#6f5620]">
       <div
         className={cn(
-          "grid items-start gap-5 p-5",
-          isCompact ? "lg:grid-cols-[minmax(0,1fr)_360px]" : "lg:grid-cols-[minmax(0,1fr)_470px]"
+          "grid min-w-0 items-start gap-5 p-4 sm:p-5",
+          isCompact
+            ? "xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]"
+            : "xl:grid-cols-[minmax(0,1fr)_minmax(280px,420px)]"
         )}
       >
         <div className="flex min-w-0 flex-col justify-between gap-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-2xl font-semibold text-[#fff8df]">{signal.symbol}</h3>
+                <h3 className="break-words text-2xl font-semibold text-[#fff8df]">
+                  {signal.symbol}
+                </h3>
                 <SignalBadge direction={signal.direction} />
                 <TradeStyleBadge tradeStyle={signal.tradeStyle} />
                 <SignalStatusBadge status={signal.status} />
@@ -85,7 +89,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
           </div>
         </div>
 
-        <div className="rounded-lg border border-[#263247] bg-[#0b111a] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div className="min-w-0 rounded-lg border border-[#263247] bg-[#0b111a] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-md border border-[#2a3445] bg-[#101722] px-3 py-2.5">
               <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
@@ -111,7 +115,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
                 <Target className="h-3.5 w-3.5 text-[var(--gold)]" />
                 Entry
               </div>
-              <p className="mt-2 text-2xl font-semibold leading-none text-[#fff8df]">
+              <p className="mt-2 truncate text-2xl font-semibold leading-none text-[#fff8df]">
                 {formatPrice(signal.entryPrice, precision)}
               </p>
             </div>
@@ -120,7 +124,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
                 <ShieldCheck className="h-3.5 w-3.5 text-[var(--red-strong)]" />
                 Stop
               </div>
-              <p className="mt-2 text-2xl font-semibold leading-none text-[#ffdfdf]">
+              <p className="mt-2 truncate text-2xl font-semibold leading-none text-[#ffdfdf]">
                 {signal.stopLoss ? formatPrice(signal.stopLoss, precision) : "Pending"}
               </p>
             </div>
@@ -141,7 +145,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
                     <span className="text-xs font-semibold uppercase tracking-wide text-[#b9d8c0]">
                       {target.label}
                     </span>
-                    <span className="text-base font-semibold text-[#7bea9b]">
+                    <span className="truncate text-base font-semibold text-[#7bea9b]">
                       {formatPrice(target.price, precision)}
                     </span>
                   </li>
