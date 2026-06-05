@@ -49,6 +49,7 @@ config; it must not import ``app.views`` or ``fastapi`` (see the table in
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Sequence
@@ -86,6 +87,7 @@ from app.services.ai import (
 )
 from app.services.indicators import IndicatorCalculator
 from app.services.market_data import MarketDataProvider
+from app.timeframes import timeframe_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -100,18 +102,6 @@ _FEEDBACK_LOOKBACK: Final[int] = 20
 
 # R figures in the feedback summary share the evaluator's 4-decimal scale.
 _R_QUANTUM: Final[Decimal] = Decimal("0.0001")
-
-# Relative magnitude of each timeframe, used to pick the lowest (scalp) and
-# highest (swing) configured timeframe to frame each style's signal on.
-_TIMEFRAME_MINUTES: Final[dict[str, int]] = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
 
 
 def _utcnow() -> datetime:
@@ -263,6 +253,7 @@ class AnalysisController:
         # Each timeframe costs at most one market-data call per pair per run (the
         # caching provider serves slow frames from memory between bars).
         self._timeframe = settings.analysis_timeframe
+        self._max_concurrency = settings.analysis_max_concurrency
         self._scalp_timeframes = list(settings.scalp_timeframes)
         self._swing_timeframes = list(settings.swing_timeframes)
         self._timeframes = list(settings.analysis_timeframes)
@@ -271,12 +262,8 @@ class AnalysisController:
         # The decision timeframe recorded on each style's signal row: the lowest
         # frame the scalp is shown, the highest frame the swing is shown — the
         # two horizons the dual signal represents.
-        self._scalp_timeframe = min(
-            self._scalp_timeframes, key=lambda tf: _TIMEFRAME_MINUTES.get(tf, 0)
-        )
-        self._swing_timeframe = max(
-            self._swing_timeframes, key=lambda tf: _TIMEFRAME_MINUTES.get(tf, 0)
-        )
+        self._scalp_timeframe = min(self._scalp_timeframes, key=timeframe_minutes)
+        self._swing_timeframe = max(self._swing_timeframes, key=timeframe_minutes)
 
         # Per-style signal lifetime — stamped onto ``expires_at`` so the
         # freshness badge and retention sweep have something to act on.
@@ -334,7 +321,7 @@ class AnalysisController:
         )
 
         # The slow part: network IO across providers, owning no DB connection.
-        outcomes = [await self._analyze_pair(target) for target in targets]
+        outcomes = await self._analyze_pairs(targets)
 
         try:
             run = await self._finalize_run(run_id, outcomes)
@@ -380,12 +367,20 @@ class AnalysisController:
 
             # Snapshot each pair's currently-open signals (one per style) in this
             # same opening transaction — before any network IO — so the model can
-            # keep or adjust them. ``current_for_pair`` reads the latest per style.
+            # keep or adjust them. Fetched for every pair in a single batched query
+            # (not once per pair) and filtered to OPEN, so the model is only ever
+            # shown a position that is genuinely live.
+            active = await pairs.list_active()
+            current_by_pair = await signal_repo.latest_open_by_pair([p.id for p in active])
+
             targets: list[_PairTarget] = []
-            for p in await pairs.list_active():
-                current = await signal_repo.current_for_pair(p.id)
+            for p in active:
+                current = current_by_pair[p.id]
                 # The pair's recent realised track record per style — fed back so
-                # the model calibrates against its own results (Iteration 9).
+                # the model calibrates against its own results (Iteration 9). Kept
+                # as bounded per-style queries (limit ``_FEEDBACK_LOOKBACK``) on
+                # purpose: a single unbounded fetch would reintroduce the very
+                # whole-history scan the performance API was hardened against.
                 scalp_closed = await signal_repo.list_recent_closed(
                     pair_id=p.id, signal_type=SignalType.SCALP, limit=_FEEDBACK_LOOKBACK
                 )
@@ -419,7 +414,28 @@ class AnalysisController:
 
         return run_id, targets
 
-    # ── Phase 2: analyse one pair (no database, all network) ─────────────────
+    # ── Phase 2: analyse the pairs (no database, all network) ────────────────
+
+    async def _analyze_pairs(self, targets: Sequence[_PairTarget]) -> list[_PairOutcome]:
+        """Analyse every pair, up to ``_max_concurrency`` at a time.
+
+        A run's pairs are independent — each is a self-contained fetch → compute
+        → reason with its own per-pair error containment — so they parallelise
+        cleanly. The semaphore caps in-flight work to stay within the market-data
+        plan's budget, turning total run time from ``pairs * per-pair`` into
+        ``ceil(pairs / concurrency) * per-pair``. Order is preserved (``gather``),
+        so the ledger's error summary stays deterministic. ``_analyze_pair`` never
+        raises, so one slow/failing pair can't abort the others.
+        """
+        if not targets:
+            return []
+        semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        async def _guarded(target: _PairTarget) -> _PairOutcome:
+            async with semaphore:
+                return await self._analyze_pair(target)
+
+        return list(await asyncio.gather(*(_guarded(target) for target in targets)))
 
     async def _analyze_pair(self, target: _PairTarget) -> _PairOutcome:
         """Fetch → compute → reason for a single pair, isolating its failures.

@@ -69,6 +69,8 @@ class _FakeSignalRepo:
         self._store = session.store
 
     async def list_open(self, *, pair_id=None):
+        if pair_id is None:
+            return [s for signals in self._store.open_signals.values() for s in signals]
         return list(self._store.open_signals.get(pair_id, []))
 
     def mark_outcome(

@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import SettingsDep
 from app.controllers import (
     AnalysisController,
     AnalysisRunController,
@@ -154,8 +155,14 @@ AnalysisRunControllerDep = Annotated[AnalysisRunController, Depends(get_analysis
 def get_performance_controller(
     signals: SignalRepositoryDep,
     pairs: PairRepositoryDep,
+    settings: SettingsDep,
 ) -> PerformanceController:
-    return PerformanceController(signals=signals, pairs=pairs)
+    return PerformanceController(
+        signals=signals,
+        pairs=pairs,
+        default_lookback_days=settings.performance_default_lookback_days,
+        equity_max_points=settings.performance_equity_max_points,
+    )
 
 
 PerformanceControllerDep = Annotated[PerformanceController, Depends(get_performance_controller)]

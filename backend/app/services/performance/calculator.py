@@ -25,6 +25,7 @@ honest, R-based denominator.
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -121,17 +122,25 @@ class PerformanceReport:
 class PerformanceCalculator:
     """Pure aggregator: a sequence of :class:`ClosedSignal` → a :class:`PerformanceReport`."""
 
-    def compute(self, signals: Sequence[ClosedSignal]) -> PerformanceReport:
+    def compute(
+        self,
+        signals: Sequence[ClosedSignal],
+        *,
+        max_equity_points: int | None = None,
+    ) -> PerformanceReport:
         """Roll the closed signals up into the full report.
 
         Input order is preserved for the equity curve, so the caller is expected
         to pass them oldest-close first (the repository orders by ``closed_at``).
+        ``max_equity_points`` caps the returned curve length (the cumulative R is
+        still computed over every signal first, then the curve is downsampled);
+        ``None`` returns every point.
         """
         return PerformanceReport(
             overall=self._summarise(signals),
             by_type=self._summarise_by_type(signals),
             calibration=self._calibrate(signals),
-            equity_curve=self._equity_curve(signals),
+            equity_curve=self._equity_curve(signals, max_points=max_equity_points),
         )
 
     # ── Summaries ──────────────────────────────────────────────────────────
@@ -223,7 +232,9 @@ class PerformanceCalculator:
 
     # ── Equity curve ───────────────────────────────────────────────────────
 
-    def _equity_curve(self, signals: Sequence[ClosedSignal]) -> list[EquityPoint]:
+    def _equity_curve(
+        self, signals: Sequence[ClosedSignal], *, max_points: int | None = None
+    ) -> list[EquityPoint]:
         curve: list[EquityPoint] = []
         running = _ZERO
         for s in signals:
@@ -236,4 +247,21 @@ class PerformanceCalculator:
                     cumulative_r=_q(running),
                 )
             )
-        return curve
+        return self._downsample(curve, max_points)
+
+    @staticmethod
+    def _downsample(curve: list[EquityPoint], max_points: int | None) -> list[EquityPoint]:
+        """Thin an equity curve to at most ``max_points`` evenly-spaced points.
+
+        The running total is already baked into each point, so dropping
+        intermediate points only reduces resolution — it never distorts the
+        levels. Even striding keeps the curve's shape, and the final point is
+        always retained so the chart still ends on the true cumulative R.
+        """
+        if max_points is None or len(curve) <= max_points:
+            return curve
+        stride = math.ceil(len(curve) / max_points)
+        sampled = curve[::stride]
+        if sampled[-1] is not curve[-1]:
+            sampled.append(curve[-1])
+        return sampled

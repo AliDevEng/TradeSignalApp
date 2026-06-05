@@ -26,14 +26,16 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Final, Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.services import ServiceError
 from app.services.indicators.calculator import IndicatorSnapshot
 from app.services.market_data.base import Candle
+from app.timeframes import timeframe_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -54,18 +56,6 @@ _JSON_FENCE_RE: Final[re.Pattern[str]] = re.compile(r"```(?:json)?\s*(\{.*?\})\s
 # the ``SignalDraft`` schema it must satisfy.
 _PROMPT_DIR: Final[Path] = Path(__file__).parent / "prompts"
 _SYSTEM_PROMPT_FILE: Final[str] = "hedge_fund_analyst.md"
-
-# Relative magnitude of each timeframe, used to present them top-down
-# (highest → lowest) regardless of the order they were configured in.
-_TIMEFRAME_MINUTES: Final[dict[str, int]] = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
 
 
 @lru_cache(maxsize=1)
@@ -247,6 +237,43 @@ class SignalDraft(BaseModel):
             raise ValueError("take-profit prices must be positive")
         return value
 
+    @model_validator(mode="after")
+    def _coherent_geometry(self) -> SignalDraft:
+        """Reject levels that contradict the direction.
+
+        The prompt demands a consistent ladder — for a buy, ``stop_loss < entry
+        < TP1 < TP2 < TP3`` (the reverse for a sell). Pydantic and the provider's
+        forced-tool schema validate field *shapes* (positive, ≤3 TPs) but not
+        these cross-field relationships, so without this a model could emit a
+        "buy" whose stop sits above entry: it would render a nonsensical R:R card
+        *and* be unscoreable (the outcome evaluator can't define risk on a
+        wrong-sided stop), silently dropping out of the track record. Rejecting
+        here surfaces as an :class:`AIResponseError`, which the controller
+        contains as a per-pair failure for that run rather than persisting a
+        broken signal.
+
+        Only meaningful for a directional draft with an entry; a ``neutral`` or
+        entry-less draft is left to :meth:`BaseAIProvider._assert_actionable`.
+        ``None`` levels are skipped, so a draft with fewer than three TPs (or no
+        stop) is checked only on the levels it actually carries.
+        """
+        if self.direction not in ("buy", "sell") or self.entry is None:
+            return self
+        ladder = [self.stop_loss, self.entry, *self.take_profits]
+        present = [level for level in ladder if level is not None]
+        ascending = self.direction == "buy"
+        for lower, higher in pairwise(present):
+            in_order = lower < higher if ascending else lower > higher
+            if not in_order:
+                arrow = "stop < entry < TP1 < TP2 < TP3" if ascending else (
+                    "stop > entry > TP1 > TP2 > TP3"
+                )
+                raise ValueError(
+                    f"{self.direction} levels must satisfy {arrow}; "
+                    f"got {[str(level) for level in present]}"
+                )
+        return self
+
 
 class DualSignalDraft(BaseModel):
     """The model's full output for one pair: a scalp *and* a swing idea.
@@ -365,7 +392,7 @@ class BaseAIProvider(AIProvider):
         # trigger, regardless of configured order.
         views = sorted(
             context.views,
-            key=lambda v: _TIMEFRAME_MINUTES.get(v.timeframe, 0),
+            key=lambda v: timeframe_minutes(v.timeframe),
             reverse=True,
         )
         scalp_set = set(context.scalp_timeframes)

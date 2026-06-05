@@ -54,6 +54,51 @@ def _eval(signal, candles):
     return OutcomeEvaluator().evaluate(signal, candles, now=_NOW)
 
 
+# ── Prior-excursion seeding (long-lived signals) ──────────────────────────────
+
+
+def test_prior_mfe_survives_a_window_that_no_longer_reaches_the_old_extreme():
+    # An earlier sweep recorded mfe=3R (price reached 106); this sweep's window
+    # only shows a quieter range that never revisits 106. The reported mfe must
+    # keep the old 3R, not shrink to what this window alone would compute.
+    signal = EvaluationInput(
+        direction="buy",
+        entry=Decimal("100"),
+        stop_loss=Decimal("98"),  # risk = 2
+        take_profits=[Decimal("110")],  # untouched, stays open
+        generated_at=_GEN,
+        expires_at=None,
+        prior_mfe=Decimal("3.0000"),  # price had reached 106 in a past window
+        prior_mae=Decimal("-0.5000"),  # and dipped to 99
+    )
+    # This window peaks at 103 (only +1.5R) — below the seeded 3R.
+    candles = [_candle(5, o=100, h=103, low=99.8, c=101)]
+    result = _eval(signal, candles)
+
+    assert result.outcome == "open"
+    assert result.mfe == Decimal("3.0000")  # preserved, not 1.5
+    assert result.mae == Decimal("-0.5000")  # preserved
+
+
+def test_new_extreme_extends_the_seeded_one():
+    signal = EvaluationInput(
+        direction="buy",
+        entry=Decimal("100"),
+        stop_loss=Decimal("98"),  # risk = 2
+        take_profits=[Decimal("110")],
+        generated_at=_GEN,
+        expires_at=None,
+        prior_mfe=Decimal("1.0000"),  # 102 previously
+        prior_mae=Decimal("-0.2000"),
+    )
+    # New window reaches 108 → +4R, beyond the seed.
+    candles = [_candle(5, o=100, h=108, low=99.6, c=107)]
+    result = _eval(signal, candles)
+
+    assert result.mfe == Decimal("4.0000")  # extended by the fresh extreme
+    assert result.mae == Decimal("-0.2000")  # nothing more adverse this window
+
+
 # ── Take-profit hits ─────────────────────────────────────────────────────────
 
 

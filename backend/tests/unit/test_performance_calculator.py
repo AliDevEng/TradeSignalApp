@@ -38,6 +38,28 @@ def _calc() -> PerformanceCalculator:
     return PerformanceCalculator()
 
 
+# ── Equity-curve downsampling ──────────────────────────────────────────────────
+
+
+def test_equity_curve_downsamples_to_cap_and_keeps_final_point():
+    signals = [_closed(realized_r="1.0", offset_minutes=i) for i in range(100)]
+    report = _calc().compute(signals, max_equity_points=10)
+
+    # Capped (allowing the always-kept final point), and the curve still ends on
+    # the true cumulative R over *all* 100 signals.
+    assert len(report.equity_curve) <= 11
+    assert report.equity_curve[-1].cumulative_r == Decimal("100.0000")
+    # The headline total is unaffected by downsampling — it sums every signal.
+    assert report.overall.total == 100
+    assert report.overall.total_r == Decimal("100.0000")
+
+
+def test_equity_curve_not_downsampled_below_cap():
+    signals = [_closed(realized_r="1.0", offset_minutes=i) for i in range(5)]
+    report = _calc().compute(signals, max_equity_points=500)
+    assert len(report.equity_curve) == 5
+
+
 # ── Empty input ──────────────────────────────────────────────────────────────
 
 

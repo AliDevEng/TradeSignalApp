@@ -467,16 +467,31 @@ def test_signal_mark_outcome_stages_fields_without_commit():
     session.commit.assert_not_called()
 
 
-async def test_signal_current_for_pair_returns_one_per_style():
+async def test_signal_latest_open_by_pair_filters_open_and_keys_every_pair_and_style():
     session = _make_session()
     session.execute.return_value = _result_with_scalars([])
     repo = SignalRepository(session)
 
-    current = await repo.current_for_pair(pair_id=3)
+    current = await repo.latest_open_by_pair([3, 9])
 
-    # Every style is keyed, even when no signal exists for it.
-    assert set(current) == set(SignalType)
-    assert all(v is None for v in current.values())
+    # One indexed query, filtered to OPEN and scoped to the requested pairs.
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "from signals" in sql
+    assert "outcome = 'open'" in sql
+    assert "pair_id in (3, 9)" in sql
+    # Every requested pair and every style is keyed, even with no open signal.
+    assert set(current) == {3, 9}
+    assert set(current[3]) == set(SignalType)
+    assert all(v is None for v in current[3].values())
+
+
+async def test_signal_latest_open_by_pair_short_circuits_on_empty_input():
+    session = _make_session()
+    repo = SignalRepository(session)
+
+    assert await repo.latest_open_by_pair([]) == {}
+    # No pairs → no query issued.
+    session.execute.assert_not_called()
 
 
 async def test_signal_list_paginated_attaches_loader_option_when_requested():
@@ -591,23 +606,6 @@ async def test_signal_list_for_run_orders_by_pair_id():
     sql = _compile(session.execute.call_args.args[0]).lower()
     assert f"analysis_run_id = '{run_id}'" in sql
     assert "order by signals.pair_id" in sql
-
-
-async def test_signal_delete_expired_filters_on_expires_at():
-    session = _make_session()
-    result = MagicMock()
-    result.rowcount = 4
-    session.execute.return_value = result
-    repo = SignalRepository(session)
-    now = datetime(2026, 5, 8, 12, 0, tzinfo=UTC)
-
-    deleted = await repo.delete_expired(now=now)
-
-    assert deleted == 4
-    sql = _compile(session.execute.call_args.args[0]).lower()
-    assert sql.startswith("delete from signals")
-    assert "expires_at is not null" in sql
-    assert "expires_at <" in sql
 
 
 # ── AnalysisRunRepository ─────────────────────────────────────────────────

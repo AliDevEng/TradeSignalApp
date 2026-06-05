@@ -10,7 +10,7 @@ ORM→wire mapping.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -119,6 +119,40 @@ async def test_get_performance_forwards_date_window():
     kwargs = signals.list_closed_for_performance.await_args.kwargs
     assert kwargs["start"] == start
     assert kwargs["end"] == end
+
+
+async def test_get_performance_applies_default_lookback_when_no_window():
+    # No explicit from/to → the controller bounds the query to the recent window
+    # rather than scanning all history.
+    signals = AsyncMock()
+    signals.list_closed_for_performance.return_value = []
+    ctrl = PerformanceController(
+        signals=signals,
+        pairs=AsyncMock(),
+        clock=lambda: _FIXED_NOW,
+        default_lookback_days=30,
+    )
+
+    await ctrl.get_performance()
+
+    kwargs = signals.list_closed_for_performance.await_args.kwargs
+    assert kwargs["start"] == _FIXED_NOW - timedelta(days=30)
+    assert kwargs["end"] is None
+
+
+async def test_get_performance_lookback_zero_means_all_time():
+    signals = AsyncMock()
+    signals.list_closed_for_performance.return_value = []
+    ctrl = PerformanceController(
+        signals=signals,
+        pairs=AsyncMock(),
+        clock=lambda: _FIXED_NOW,
+        default_lookback_days=0,
+    )
+
+    await ctrl.get_performance()
+
+    assert signals.list_closed_for_performance.await_args.kwargs["start"] is None
 
 
 async def test_get_performance_preserves_decimal_r():

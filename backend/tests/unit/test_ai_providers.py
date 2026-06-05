@@ -360,6 +360,56 @@ def test_negative_take_profit_rejected():
         )
 
 
+def test_buy_with_stop_above_entry_rejected():
+    # A wrong-sided stop would be unscoreable (no defined risk) and nonsensical.
+    with pytest.raises(ValueError, match="buy levels must satisfy"):
+        SignalDraft(
+            direction="buy",
+            confidence=0.6,
+            entry=Decimal("1.10"),
+            stop_loss=Decimal("1.12"),
+            take_profits=[Decimal("1.15")],
+        )
+
+
+def test_buy_with_non_monotonic_take_profits_rejected():
+    with pytest.raises(ValueError, match="buy levels must satisfy"):
+        SignalDraft(
+            direction="buy",
+            confidence=0.6,
+            entry=Decimal("1.10"),
+            stop_loss=Decimal("1.09"),
+            take_profits=[Decimal("1.13"), Decimal("1.11")],
+        )
+
+
+def test_sell_levels_must_descend():
+    with pytest.raises(ValueError, match="sell levels must satisfy"):
+        SignalDraft(
+            direction="sell",
+            confidence=0.6,
+            entry=Decimal("1.10"),
+            stop_loss=Decimal("1.08"),  # stop should be ABOVE entry for a sell
+            take_profits=[Decimal("1.05")],
+        )
+
+
+def test_coherent_buy_ladder_accepted():
+    draft = SignalDraft(
+        direction="buy",
+        confidence=0.6,
+        entry=Decimal("1.10"),
+        stop_loss=Decimal("1.09"),
+        take_profits=[Decimal("1.11"), Decimal("1.12"), Decimal("1.13")],
+    )
+    assert draft.direction == "buy"
+
+
+def test_geometry_skipped_for_entryless_or_neutral_draft():
+    # No entry (neutral chop reply) — geometry can't apply; left to _assert_actionable.
+    assert SignalDraft(direction="neutral", confidence=0.4).direction == "neutral"
+
+
 # ── Factory ──────────────────────────────────────────────────────────────────
 
 

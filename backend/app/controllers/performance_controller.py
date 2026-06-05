@@ -26,7 +26,7 @@ Layering: imports services, repositories, models, schemas; never ``app.views`` o
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.controllers.exceptions import ResourceNotFoundError
 from app.database.repository import PairRepository, SignalRepository
@@ -61,11 +61,19 @@ class PerformanceController:
         pairs: PairRepository,
         calculator: PerformanceCalculator | None = None,
         clock: Callable[[], datetime] = _utcnow,
+        default_lookback_days: int = 90,
+        equity_max_points: int = 500,
     ) -> None:
         self._signals = signals
         self._pairs = pairs
         self._calculator = calculator or PerformanceCalculator()
         self._clock = clock
+        # A bounded default window keeps the aggregation from scanning unbounded
+        # history when the caller gives no explicit range; 0 means all-time.
+        self._default_lookback = (
+            timedelta(days=default_lookback_days) if default_lookback_days > 0 else None
+        )
+        self._equity_max_points = equity_max_points
 
     async def get_performance(
         self,
@@ -86,13 +94,21 @@ class PerformanceController:
         pair_id = await self._resolve_pair_id(pair_symbol)
         style = SignalType(signal_type) if signal_type is not None else None
 
+        # Fall back to the recent-window default only when the caller specified
+        # no bound at all; an explicit ``from``/``to`` (either side) is honoured
+        # verbatim so all-time and custom ranges remain reachable.
+        if start is None and end is None and self._default_lookback is not None:
+            start = self._clock() - self._default_lookback
+
         rows = await self._signals.list_closed_for_performance(
             pair_id=pair_id,
             signal_type=style,
             start=start,
             end=end,
         )
-        report = self._calculator.compute(self._to_closed(rows))
+        report = self._calculator.compute(
+            self._to_closed(rows), max_equity_points=self._equity_max_points
+        )
 
         return PerformanceResponse(
             overall=self._summary_to_wire(report.overall),

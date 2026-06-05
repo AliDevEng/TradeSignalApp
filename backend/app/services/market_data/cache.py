@@ -31,21 +31,9 @@ from datetime import UTC, datetime
 from typing import Final
 
 from app.services.market_data.base import Candle, MarketDataProvider
+from app.timeframes import timeframe_minutes
 
 logger = logging.getLogger(__name__)
-
-# Bar duration (minutes) per timeframe, used to bucket a moment into the bar
-# window it falls in. An unknown timeframe maps to 0 so it is never served from
-# cache (always delegated to the wrapped provider).
-_TIMEFRAME_MINUTES: Final[dict[str, int]] = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
 
 # Bar windows are counted from this instant. Since every supported timeframe
 # divides a day, epoch-aligned windows coincide with UTC-midnight-aligned ones —
@@ -95,7 +83,7 @@ class CachingMarketDataProvider(MarketDataProvider):
         provider closes its bars. Two moments share an index iff no bar boundary
         lies between them.
         """
-        minutes = _TIMEFRAME_MINUTES.get(timeframe, 0)
+        minutes = timeframe_minutes(timeframe)
         if minutes <= 0:
             return None
         elapsed_minutes = int((ts - _EPOCH).total_seconds() // 60)

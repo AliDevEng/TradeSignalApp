@@ -159,15 +159,20 @@ class OutcomeController:
         now = self._clock()
         evaluated = 0
         closed = 0
+        evaluable = {t.id for t in targets if t.id not in fetch_failures}
 
         async with self._database.session() as session:
             signals_repo = SignalRepository(session)
-            for target in targets:
-                if target.id in fetch_failures:
-                    continue
-                candles = candles_by_pair.get(target.id, [])
-                open_signals = await signals_repo.list_open(pair_id=target.id)
-                for signal in open_signals:
+            # One query for every open signal, then grouped per pair in memory —
+            # instead of a query per pair (an N+1 over the active set). The open
+            # set is inherently small (recent, unexpired rows).
+            open_by_pair: dict[int, list[Signal]] = {}
+            for signal in await signals_repo.list_open():
+                open_by_pair.setdefault(signal.pair_id, []).append(signal)
+
+            for pair_id in evaluable:
+                candles = candles_by_pair.get(pair_id, [])
+                for signal in open_by_pair.get(pair_id, []):
                     self._apply(signals_repo, signal, candles, now=now)
                     evaluated += 1
                     if signal.outcome is not SignalOutcome.OPEN:
@@ -205,6 +210,10 @@ class OutcomeController:
                 ],
                 generated_at=signal.generated_at,
                 expires_at=signal.expires_at,
+                # Carry the previously persisted excursions forward so extremes
+                # from earlier candle windows survive (see OutcomeEvaluator).
+                prior_mfe=signal.mfe,
+                prior_mae=signal.mae,
             ),
             candles,
             now=now,

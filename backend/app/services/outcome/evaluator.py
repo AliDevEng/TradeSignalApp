@@ -23,11 +23,21 @@ by bar oldest→newest:
 * If no level is touched and ``expires_at`` has lapsed, the result is marked to
   market at the last candle's close (``expired``); otherwise it stays ``open``.
 
-``mfe``/``mae`` (max favourable/adverse excursion, in R) are tracked over every
-candle seen up to and including the closing one, so they are meaningful even
-while the signal is still open. All R figures require a stop (to define risk); a
-signal with no stop yields ``None`` for every R-denominated field but is still
-classified (``hit_tp*``/``expired``/``open``).
+``mfe``/``mae`` (max favourable/adverse excursion, in R) are tracked over the
+signal's whole life, not just the candles in one fetch. The evaluator runs every
+sweep against the latest fixed-size candle window, which for a multi-day swing
+cannot reach back to the signal's birth; to avoid understating the excursions it
+**seeds the running extremes from the signal's previously persisted ``mfe``/``mae``**
+(``prior_mfe``/``prior_mae``) and then folds the current window on top. Because
+``max``/``min`` are idempotent, re-folding overlapping candles across sweeps is
+harmless, and an extreme reached in an earlier window survives even once it ages
+out of the fetched range. (The one thing that can still be missed is a level
+touched entirely during downtime longer than the candle window — inherent to any
+windowed fetch, and now bounded by the *gap* rather than the signal's TTL.)
+
+All R figures require a stop (to define risk); a signal with no stop yields
+``None`` for every R-denominated field but is still classified
+(``hit_tp*``/``expired``/``open``).
 """
 
 from __future__ import annotations
@@ -77,6 +87,13 @@ class EvaluationInput:
     take_profits: Sequence[Decimal]
     generated_at: datetime
     expires_at: datetime | None
+    # The signal's running excursions from the previous evaluation, in R. Seeded
+    # back so extremes reached in earlier (now aged-out) candle windows are not
+    # lost — the fix for understated mfe/mae on long-lived signals. ``None`` on
+    # the first evaluation (or when risk is undefined), which reproduces the
+    # original from-scratch behaviour.
+    prior_mfe: Decimal | None = None
+    prior_mae: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,9 +136,12 @@ class OutcomeEvaluator:
         risk = self._risk(signal.entry, stop, is_buy=is_buy)
         tps = list(signal.take_profits)
 
-        # Running favourable/adverse price extremes, in price terms.
-        fav: Decimal | None = None
-        adv: Decimal | None = None
+        # Running favourable/adverse price extremes, in price terms. Seeded from
+        # the signal's previously persisted excursions so extremes from earlier
+        # windows survive even after those candles age out of the fetched range.
+        fav, adv = self._seed_extremes(
+            signal.entry, signal.prior_mfe, signal.prior_mae, risk, is_buy=is_buy
+        )
 
         for candle in relevant:
             fav, adv = self._extend_extremes(candle, fav, adv, is_buy=is_buy)
@@ -165,6 +185,35 @@ class OutcomeEvaluator:
             return None
         distance = (entry - stop) if is_buy else (stop - entry)
         return distance if distance > 0 else None
+
+    @staticmethod
+    def _seed_extremes(
+        entry: Decimal,
+        prior_mfe: Decimal | None,
+        prior_mae: Decimal | None,
+        risk: Decimal | None,
+        *,
+        is_buy: bool,
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """Reconstruct prior favourable/adverse *prices* from stored R excursions.
+
+        The exact inverse of :meth:`_excursions`: for a buy ``fav = entry + mfe·risk``
+        and ``adv = entry + mae·risk`` (mae ≤ 0 ⇒ below entry); for a sell the
+        signs flip. Returns ``(None, None)`` when risk is undefined (then no R was
+        ever stored) or on the first evaluation (no prior), so the scan starts
+        from scratch exactly as before. Because the reconstruction is exact, a
+        later :meth:`_excursions` over an unchanged extreme yields the same R back
+        — seeding can only preserve or raise an extreme, never shrink it.
+        """
+        if risk is None:
+            return None, None
+        fav = None if prior_mfe is None else (
+            entry + prior_mfe * risk if is_buy else entry - prior_mfe * risk
+        )
+        adv = None if prior_mae is None else (
+            entry + prior_mae * risk if is_buy else entry - prior_mae * risk
+        )
+        return fav, adv
 
     @staticmethod
     def _extend_extremes(

@@ -106,9 +106,14 @@ class _FakeSignalRepo:
             raise RuntimeError("DB blip while persisting signals")
         self._store.signals.extend(signals)
 
-    async def current_for_pair(self, pair_id):
-        seeded = self._store.current_by_pair.get(pair_id, {})
-        return {style: seeded.get(style) for style in SignalType}
+    async def latest_open_by_pair(self, pair_ids):
+        return {
+            pair_id: {
+                style: self._store.current_by_pair.get(pair_id, {}).get(style)
+                for style in SignalType
+            }
+            for pair_id in pair_ids
+        }
 
     async def list_recent_closed(self, *, pair_id, signal_type=None, limit=20):
         # Feedback-loop lookup; the store seeds recent closed signals per pair.
@@ -224,6 +229,7 @@ def _build(
         scalp_timeframes=scalp or tfs,
         swing_timeframes=swing or tfs,
         analysis_candle_count=200,
+        analysis_max_concurrency=3,
         signal_scalp_ttl_minutes=240,
         signal_swing_ttl_minutes=4320,
     )

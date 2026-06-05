@@ -5,22 +5,12 @@ from fastapi import Depends
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from app.timeframes import timeframe_minutes
+
 Environment = Literal["development", "staging", "production", "test"]
 AIProvider = Literal["groq", "anthropic"]
 MarketDataProvider = Literal["twelve_data"]
 Timeframe = Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
-
-# Relative magnitude of each timeframe, used to order the per-style frames
-# low→high when computing their union.
-_TIMEFRAME_MINUTES: dict[str, int] = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
 
 
 class Settings(BaseSettings):
@@ -86,6 +76,14 @@ class Settings(BaseSettings):
     # ── Analysis schedule ──────────────────────────────────────────────────
     analysis_interval_minutes: int = Field(default=15, ge=1, le=1440)
     analysis_candle_count: int = Field(default=200, ge=20, le=5000)
+    # How many pairs a single run analyses concurrently. Each pair costs a few
+    # market-data calls + one AI call (tens of seconds), so a run's wall-clock
+    # time is ``ceil(pairs / this) * per-pair`` — without it, run time grows
+    # linearly with the pair count and can overrun the schedule. Kept modest by
+    # default to respect the market-data plan's per-minute budget (the candle
+    # cache + provider retries make a small burst safe); raise it once on a
+    # higher-tier data plan. ``1`` restores fully-sequential behaviour.
+    analysis_max_concurrency: int = Field(default=3, ge=1, le=32)
     # The primary (decision) timeframe: the one a generated signal is framed on
     # and recorded against. Must be one of the analysed timeframes (the union of
     # the per-style frames below); appended automatically if omitted from both.
@@ -114,11 +112,25 @@ class Settings(BaseSettings):
 
     # ── Signal lifetime ────────────────────────────────────────────────────
     # How long each style's signal stays "fresh" before ``expires_at`` lapses.
-    # A scalp ages out in hours; a swing lives for days. These drive the
-    # frontend freshness badge and the retention sweep, and are bounded so a
-    # typo can't create an effectively-immortal or instantly-stale signal.
+    # A scalp ages out in hours; a swing lives for days. These drive the frontend
+    # freshness badge and the outcome evaluator's mark-to-market on expiry, and
+    # are bounded so a typo can't create an effectively-immortal or instantly-
+    # stale signal.
     signal_scalp_ttl_minutes: int = Field(default=240, ge=1, le=10080)  # 4h .. 7d cap
     signal_swing_ttl_minutes: int = Field(default=4320, ge=1, le=43200)  # 3d .. 30d cap
+
+    # ── Performance / track record ───────────────────────────────────────────
+    # Default window for the performance API when the caller passes no explicit
+    # from/to: only signals closed within the last N days are aggregated, so the
+    # query and in-memory roll-up stay bounded as history accumulates. Callers
+    # can still request any window explicitly. ``0`` disables the default
+    # (all-time), which is fine for a young dataset but not as it grows.
+    performance_default_lookback_days: int = Field(default=90, ge=0, le=3650)
+    # Hard cap on equity-curve points returned. Cumulative R is computed over
+    # *every* closed signal in the window; the resulting curve is then
+    # downsampled to at most this many points (the final point always kept) so
+    # the JSON payload can't balloon — a line chart can't resolve more anyway.
+    performance_equity_max_points: int = Field(default=500, ge=2, le=10000)
 
     # ── Scheduler ──────────────────────────────────────────────────────────
     # Disable on API-only replicas so the analysis job runs on exactly one
@@ -201,7 +213,7 @@ class Settings(BaseSettings):
         """
         merged = [*self.scalp_timeframes, *self.swing_timeframes]
         union: list[str] = []
-        for tf in sorted(merged, key=lambda t: _TIMEFRAME_MINUTES.get(t, 0)):
+        for tf in sorted(merged, key=timeframe_minutes):
             if tf not in union:
                 union.append(tf)
         return union

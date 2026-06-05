@@ -20,6 +20,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
@@ -50,25 +51,27 @@ class SignalRepository(BaseRepository[Signal]):
         signal: Signal,
         *,
         outcome: SignalOutcome,
-        realized_r: object | None,
-        mfe: object | None,
-        mae: object | None,
-        closed_at: object | None,
-        last_evaluated_at: object,
+        realized_r: Decimal | None,
+        mfe: Decimal | None,
+        mae: Decimal | None,
+        closed_at: datetime | None,
+        last_evaluated_at: datetime,
     ) -> None:
         """Stage an outcome update onto an already-loaded signal.
 
         Like every write helper here it only *stages* the change on the session
         (mutating the tracked instance); the controller owns the commit. Kept as
         a named method so the outcome-field set lives in one place rather than
-        being assigned ad hoc at the call site.
+        being assigned ad hoc at the call site. The precise parameter types mean
+        the type checker guards this write path (a stray ``float`` R, say) instead
+        of being silenced by a blanket ignore.
         """
         signal.outcome = outcome
-        signal.realized_r = realized_r  # type: ignore[assignment]
-        signal.mfe = mfe  # type: ignore[assignment]
-        signal.mae = mae  # type: ignore[assignment]
-        signal.closed_at = closed_at  # type: ignore[assignment]
-        signal.last_evaluated_at = last_evaluated_at  # type: ignore[assignment]
+        signal.realized_r = realized_r
+        signal.mfe = mfe
+        signal.mae = mae
+        signal.closed_at = closed_at
+        signal.last_evaluated_at = last_evaluated_at
 
     async def latest_for_pair(
         self,
@@ -93,18 +96,39 @@ class SignalRepository(BaseRepository[Signal]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
-    async def current_for_pair(self, pair_id: int) -> dict[SignalType, Signal | None]:
-        """The pair's currently-open signal of each style (latest per style).
+    async def latest_open_by_pair(
+        self, pair_ids: Sequence[int]
+    ) -> dict[int, dict[SignalType, Signal | None]]:
+        """Each pair's currently-**open** signal of each style, in one query.
 
-        Used both to feed the AI's keep-or-adjust loop and to render the "current
-        scalp + swing" view. Returns every style as a key so callers can rely on
-        the shape without a membership check; an absent style maps to ``None``.
+        Feeds the AI's keep-or-adjust loop: the model should reason about the
+        position that is actually live, so this filters to ``OPEN`` (a signal
+        that already hit a TP/SL is closed and must not be presented as the
+        current idea to keep). Batched across all active pairs — one indexed
+        query instead of the previous two-per-pair N+1 — and bounded by the set
+        of open signals (small: recent, unexpired rows), so it can't grow into
+        the unbounded scan the recent-closed feedback deliberately avoids.
+
+        Rows are ordered ascending by ``generated_at`` so a simple last-write-wins
+        fold leaves the newest open signal per ``(pair, style)``. Every requested
+        pair and every style is present as a key (mapping to ``None`` when absent)
+        so callers never need a membership check.
         """
-        current: dict[SignalType, Signal | None] = dict.fromkeys(SignalType)
-        for style in SignalType:
-            rows = await self.latest_for_pair(pair_id, limit=1, signal_type=style)
-            current[style] = rows[0] if rows else None
-        return current
+        result: dict[int, dict[SignalType, Signal | None]] = {
+            pair_id: dict.fromkeys(SignalType) for pair_id in pair_ids
+        }
+        if not pair_ids:
+            return result
+
+        stmt = (
+            select(Signal)
+            .where(Signal.outcome == SignalOutcome.OPEN, Signal.pair_id.in_(pair_ids))
+            .order_by(Signal.pair_id, Signal.signal_type, Signal.generated_at)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        for row in rows:
+            result[row.pair_id][row.signal_type] = row
+        return result
 
     async def list_paginated(
         self,
@@ -241,15 +265,3 @@ class SignalRepository(BaseRepository[Signal]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
-
-    async def delete_expired(self, *, now: datetime) -> int:
-        """Drop signals whose ``expires_at`` has passed. Returns row count.
-
-        Used by the retention sweep. Deliberately bulk DELETE rather
-        than load-then-delete: expired-signal sweeps are dominated by
-        rows that never need to be hydrated into Python.
-        """
-        return await self.delete_where(
-            Signal.expires_at.is_not(None),
-            Signal.expires_at < now,
-        )
