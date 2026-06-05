@@ -27,11 +27,12 @@ controller types; it must not import ``app.views`` or ``fastapi``.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from app.controllers.exceptions import ResourceNotFoundError
 from app.controllers.results import Page
 from app.database.repository import PairRepository, SignalRepository
-from app.models import Signal, SignalOutcome, SignalType
+from app.models import Signal, SignalDirection, SignalOutcome, SignalType
 from app.schemas.signal import SignalResponse
 
 
@@ -53,28 +54,43 @@ class SignalController:
         analysis_run_id: uuid.UUID | None = None,
         signal_type: str | None = None,
         outcome: str | None = None,
+        direction: str | None = None,
+        status: str | None = None,
+        result: str | None = None,
+        sort: str | None = None,
     ) -> Page[SignalResponse]:
-        """A page of signals, newest first, filtered by pair, run, style, outcome.
+        """A page of signals, filtered + sorted entirely server-side.
 
-        ``offset``/``limit`` are passed through from the view's pagination
-        dependency; the view reassembles page/per_page into the response meta.
-        ``signal_type``/``outcome`` arrive as validated wire literals and are
-        converted to the ORM enums here, at the boundary, so the view never
-        imports a model enum. Filtering by a ``pair_symbol`` that doesn't exist
-        raises :class:`ResourceNotFoundError` rather than silently returning an
-        empty page — a filter that names a concrete resource should fail honestly
-        if that resource is unknown.
+        ``offset``/``limit`` come from the view's pagination dependency. The wire
+        literals (``signal_type``/``outcome``/``direction``) are converted to ORM
+        enums here, at the boundary, so the view never imports a model enum;
+        ``status``/``result``/``sort`` are coarse, derived/category concepts the
+        repository interprets directly. Pushing every filter and the sort to the
+        database (rather than refining a loaded page) is what keeps the result —
+        and the pagination ``total`` — correct and complete across pages.
+        Filtering by a ``pair_symbol`` that doesn't exist raises
+        :class:`ResourceNotFoundError` rather than silently returning empty.
         """
         pair_id = await self._resolve_pair_id(pair_symbol)
         style = SignalType(signal_type) if signal_type is not None else None
-        result = SignalOutcome(outcome) if outcome is not None else None
+        outcome_enum = SignalOutcome(outcome) if outcome is not None else None
+        direction_enum = SignalDirection(direction) if direction is not None else None
+        # Single ``now`` shared by the count and the row fetch so a signal can't
+        # cross the expiry boundary between the two and desync the total.
+        now = datetime.now(UTC)
 
-        total = await self._signals.count_filtered(
-            pair_id=pair_id,
-            analysis_run_id=analysis_run_id,
-            signal_type=style,
-            outcome=result,
-        )
+        filters = {
+            "pair_id": pair_id,
+            "analysis_run_id": analysis_run_id,
+            "signal_type": style,
+            "outcome": outcome_enum,
+            "direction": direction_enum,
+            "status": status,
+            "result": result,
+            "now": now,
+        }
+
+        total = await self._signals.count_filtered(**filters)
         # Short-circuit the row fetch when the count is zero: nothing to load,
         # and it keeps an empty page from issuing a guaranteed-empty SELECT.
         if total == 0:
@@ -83,11 +99,9 @@ class SignalController:
         rows = await self._signals.list_paginated(
             offset=offset,
             limit=limit,
-            pair_id=pair_id,
-            analysis_run_id=analysis_run_id,
-            signal_type=style,
-            outcome=result,
+            sort=sort,
             eager_load_pair=True,
+            **filters,
         )
         return Page(items=[self._to_response(row) for row in rows], total=total)
 

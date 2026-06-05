@@ -8,9 +8,11 @@ import { EquityCurveChart } from "@/components/charts/EquityCurveChart";
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { usePerformanceQuery } from "@/hooks/useTradeQueries";
+import { PREVIEW_DATA_ENABLED } from "@/lib/env";
 import { buildPerformanceFromSignals } from "@/lib/performance";
 import { signals as mockSignals } from "@/lib/mockSignals";
 import { formatR } from "@/lib/outcome";
@@ -48,11 +50,13 @@ export function PerformanceDashboardPage() {
   );
 
   const isQueryError = hasMounted && query.isError;
+  // Preview mode only: derive a track record from bundled sample signals so the
+  // page demonstrates its shape offline. Off by default — otherwise we'd show a
+  // fabricated track record as if it were the real one.
+  const showPreview = isQueryError && PREVIEW_DATA_ENABLED;
 
-  // Offline preview: derive a track record from the bundled mock signals so the
-  // page still demonstrates its shape when the live API is unreachable.
   const fallback = useMemo(() => buildPerformanceFromSignals(mockSignals), []);
-  const performance: Performance | null = isQueryError
+  const performance: Performance | null = showPreview
     ? fallback
     : hasMounted
       ? (query.data ?? null)
@@ -85,7 +89,7 @@ export function PerformanceDashboardPage() {
         <ErrorState
           error={query.error as Error}
           onRetry={() => void query.refetch()}
-          title="Live API unavailable, showing preview data"
+          title={showPreview ? "Live API unavailable, showing preview data" : "Live API unavailable"}
         />
       ) : null}
 
@@ -95,10 +99,18 @@ export function PerformanceDashboardPage() {
         </p>
       ) : null}
 
-      {isInitialLoading || performance === null ? (
+      {isInitialLoading ? (
         <div className="flex justify-center py-20">
           <LoadingSpinner />
         </div>
+      ) : performance === null ? (
+        // Errored with preview off (ErrorState shown above) or genuinely no data.
+        isQueryError ? null : (
+          <EmptyState
+            description="Once signals close with a realised R, the track record charts here."
+            title="No performance data yet"
+          />
+        )
       ) : (
         <div className="space-y-5">
           <OverallKpis summary={performance.overall} />

@@ -25,7 +25,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
       <body style={{ background: "#090b10", color: "#f6f0df", fontFamily: "system-ui, sans-serif" }}>
         <main
           style={{
-            minHeight: "100vh",
+            minHeight: "100dvh",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",

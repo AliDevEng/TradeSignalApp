@@ -23,11 +23,14 @@ import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import {
   formatDateTime,
   formatPrice,
+  formatRiskReward,
   formatSignedPercent,
   getPricePrecision
 } from "@/lib/formatters";
+import { PREVIEW_DATA_ENABLED } from "@/lib/env";
 import { getSignalById } from "@/lib/mockSignals";
 import { mapApiPair, mapApiSignal } from "@/lib/signalMappers";
+import { ApiClientError } from "@/services/api";
 import { getPairs, getSignal } from "@/services/tradeService";
 import type { Signal } from "@/types/signal";
 
@@ -51,8 +54,18 @@ async function loadSignalDetail(signalId: string): Promise<Signal | null> {
     const pairs = apiPairs.map(mapApiPair);
 
     return mapApiSignal(apiSignal, pairs);
-  } catch {
-    return getSignalById(signalId) ?? null;
+  } catch (error) {
+    // A genuine 404 means the signal doesn't exist → render not-found.
+    if (error instanceof ApiClientError && error.status === 404) {
+      return null;
+    }
+    // The API is down/erroring. Only substitute sample data in preview mode;
+    // otherwise surface the failure to the route error boundary rather than
+    // quietly showing a fabricated signal.
+    if (PREVIEW_DATA_ENABLED) {
+      return getSignalById(signalId) ?? null;
+    }
+    throw error;
   }
 }
 
@@ -118,7 +131,7 @@ export default async function SignalDetailPage({ params }: SignalDetailPageProps
               <ContextMetric
                 icon={TrendingUp}
                 label="Risk / Reward"
-                value={signal.riskReward !== null ? signal.riskReward.toFixed(2) : "Pending"}
+                value={signal.riskReward !== null ? `${formatRiskReward(signal.riskReward)} : 1` : "Pending"}
               />
               <ContextMetric
                 icon={CalendarClock}

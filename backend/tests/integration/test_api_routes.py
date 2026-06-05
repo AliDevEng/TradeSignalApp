@@ -144,7 +144,8 @@ async def test_list_signals_forwards_pagination_and_filters(client, signals_ctrl
     run_id = uuid.uuid4()
 
     await client.get(
-        f"/api/v1/signals?page=2&per_page=5&pair=EURUSD&run_id={run_id}&signal_type=scalp"
+        f"/api/v1/signals?page=2&per_page=5&pair=EURUSD&run_id={run_id}"
+        "&signal_type=scalp&direction=buy&status=active&result=win&sort=confidence"
     )
 
     kwargs = signals_ctrl.list_signals.await_args.kwargs
@@ -155,6 +156,10 @@ async def test_list_signals_forwards_pagination_and_filters(client, signals_ctrl
         "analysis_run_id": run_id,
         "signal_type": "scalp",
         "outcome": None,
+        "direction": "buy",
+        "status": "active",
+        "result": "win",
+        "sort": "confidence",
     }
 
 

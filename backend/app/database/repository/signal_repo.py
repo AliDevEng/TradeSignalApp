@@ -22,11 +22,21 @@ from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql import ColumnExpressionArgument
 
 from app.database.repository.base import BaseRepository
-from app.models import Signal, SignalOutcome, SignalType
+from app.models import Pair, Signal, SignalDirection, SignalOutcome, SignalType
+
+# Result-category filter → the concrete outcomes it covers. Mirrors the frontend
+# ``outcomeCategory`` grouping so a "Wins" filter means any take-profit rung.
+_RESULT_OUTCOMES: dict[str, tuple[SignalOutcome, ...]] = {
+    "open": (SignalOutcome.OPEN,),
+    "win": (SignalOutcome.HIT_TP1, SignalOutcome.HIT_TP2, SignalOutcome.HIT_TP3),
+    "loss": (SignalOutcome.HIT_SL,),
+    "expired": (SignalOutcome.EXPIRED, SignalOutcome.CANCELLED),
+}
 
 
 class SignalRepository(BaseRepository[Signal]):
@@ -130,6 +140,65 @@ class SignalRepository(BaseRepository[Signal]):
             result[row.pair_id][row.signal_type] = row
         return result
 
+    @staticmethod
+    def _filter_conditions(
+        *,
+        pair_id: int | None,
+        analysis_run_id: uuid.UUID | None,
+        signal_type: SignalType | None,
+        outcome: SignalOutcome | None,
+        direction: SignalDirection | None,
+        result: str | None,
+        status: str | None,
+        now: datetime | None,
+    ) -> list[ColumnExpressionArgument[bool]]:
+        """The shared WHERE clauses for the signal list + its count.
+
+        Factored so :meth:`list_paginated` and :meth:`count_filtered` can never
+        drift — a filter applied to one but not the other would make the
+        pagination total disagree with the rows. ``status`` is lifecycle-derived
+        (direction + expiry vs. ``now``); ``result`` maps a result category onto
+        its outcome set.
+        """
+        conditions: list[ColumnExpressionArgument[bool]] = []
+        if pair_id is not None:
+            conditions.append(Signal.pair_id == pair_id)
+        if analysis_run_id is not None:
+            conditions.append(Signal.analysis_run_id == analysis_run_id)
+        if signal_type is not None:
+            conditions.append(Signal.signal_type == signal_type)
+        if outcome is not None:
+            conditions.append(Signal.outcome == outcome)
+        if direction is not None:
+            conditions.append(Signal.direction == direction)
+        if result is not None and result in _RESULT_OUTCOMES:
+            conditions.append(Signal.outcome.in_(_RESULT_OUTCOMES[result]))
+        if status is not None and now is not None:
+            unexpired = or_(Signal.expires_at.is_(None), Signal.expires_at >= now)
+            if status == "expired":
+                conditions.append(
+                    and_(Signal.expires_at.is_not(None), Signal.expires_at < now)
+                )
+            elif status == "watchlist":
+                conditions.append(and_(Signal.direction == SignalDirection.NEUTRAL, unexpired))
+            elif status == "active":
+                conditions.append(and_(Signal.direction != SignalDirection.NEUTRAL, unexpired))
+        return conditions
+
+    @staticmethod
+    def _order_by(sort: str | None) -> list[ColumnExpressionArgument[object]]:
+        """Map a sort key to ORDER BY columns (default: newest first).
+
+        ``symbol`` orders by the pair's symbol and so requires the caller to join
+        ``Pair`` (``list_paginated`` does); ``generated_at`` is always the final
+        tiebreak for a stable, deterministic order.
+        """
+        if sort == "confidence":
+            return [desc(Signal.confidence), desc(Signal.generated_at)]
+        if sort == "symbol":
+            return [asc(Pair.symbol), desc(Signal.generated_at)]
+        return [desc(Signal.generated_at)]
+
     async def list_paginated(
         self,
         *,
@@ -139,29 +208,39 @@ class SignalRepository(BaseRepository[Signal]):
         analysis_run_id: uuid.UUID | None = None,
         signal_type: SignalType | None = None,
         outcome: SignalOutcome | None = None,
+        direction: SignalDirection | None = None,
+        result: str | None = None,
+        status: str | None = None,
+        sort: str | None = None,
+        now: datetime | None = None,
         eager_load_pair: bool = False,
     ) -> Sequence[Signal]:
-        """Generic signal list with optional filters and IN-loaded pair.
+        """Generic signal list with optional filters, sort, and IN-loaded pair.
 
-        ``eager_load_pair=True`` fetches the related ``Pair`` row in a
-        second IN query, which is what response models that surface the
-        symbol need. Default off so callers that don't need it pay
-        nothing.
+        ``eager_load_pair=True`` fetches the related ``Pair`` row in a second IN
+        query, which is what response models that surface the symbol need.
+        Filters/sort are pushed to the database (not applied to a loaded page) so
+        the result is correct and complete across pagination.
         """
-        stmt = select(Signal)
-        if pair_id is not None:
-            stmt = stmt.where(Signal.pair_id == pair_id)
-        if analysis_run_id is not None:
-            stmt = stmt.where(Signal.analysis_run_id == analysis_run_id)
-        if signal_type is not None:
-            stmt = stmt.where(Signal.signal_type == signal_type)
-        if outcome is not None:
-            stmt = stmt.where(Signal.outcome == outcome)
+        stmt = select(Signal).where(
+            *self._filter_conditions(
+                pair_id=pair_id,
+                analysis_run_id=analysis_run_id,
+                signal_type=signal_type,
+                outcome=outcome,
+                direction=direction,
+                result=result,
+                status=status,
+                now=now,
+            )
+        )
+        if sort == "symbol":
+            stmt = stmt.join(Pair, Signal.pair_id == Pair.id)
         if eager_load_pair:
             stmt = stmt.options(selectinload(Signal.pair))
-        stmt = stmt.order_by(desc(Signal.generated_at)).offset(offset).limit(limit)
-        result = await self._session.execute(stmt)
-        return result.scalars().all()
+        stmt = stmt.order_by(*self._order_by(sort)).offset(offset).limit(limit)
+        result_set = await self._session.execute(stmt)
+        return result_set.scalars().all()
 
     async def count_filtered(
         self,
@@ -170,23 +249,30 @@ class SignalRepository(BaseRepository[Signal]):
         analysis_run_id: uuid.UUID | None = None,
         signal_type: SignalType | None = None,
         outcome: SignalOutcome | None = None,
+        direction: SignalDirection | None = None,
+        result: str | None = None,
+        status: str | None = None,
+        now: datetime | None = None,
     ) -> int:
         """Row count matching the same filters as :meth:`list_paginated`.
 
-        Kept symmetric with ``list_paginated`` so the two together
-        produce a consistent ``PaginatedResponse`` envelope.
+        Shares :meth:`_filter_conditions` with the list query so the two can't
+        drift and the ``PaginatedResponse`` total always matches the rows.
         """
-        stmt = select(func.count()).select_from(Signal)
-        if pair_id is not None:
-            stmt = stmt.where(Signal.pair_id == pair_id)
-        if analysis_run_id is not None:
-            stmt = stmt.where(Signal.analysis_run_id == analysis_run_id)
-        if signal_type is not None:
-            stmt = stmt.where(Signal.signal_type == signal_type)
-        if outcome is not None:
-            stmt = stmt.where(Signal.outcome == outcome)
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one())
+        stmt = select(func.count()).select_from(Signal).where(
+            *self._filter_conditions(
+                pair_id=pair_id,
+                analysis_run_id=analysis_run_id,
+                signal_type=signal_type,
+                outcome=outcome,
+                direction=direction,
+                result=result,
+                status=status,
+                now=now,
+            )
+        )
+        count_result = await self._session.execute(stmt)
+        return int(count_result.scalar_one())
 
     async def list_closed_for_performance(
         self,

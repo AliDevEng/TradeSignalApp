@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, Bot, Layers3, LineChart, RefreshCw, Sparkles } from "lucide-react";
+import { BarChart3, Bot, Clock3, Layers3, RefreshCw, Sparkles } from "lucide-react";
 
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { HealthPanel } from "@/components/health/HealthPanel";
@@ -11,52 +11,80 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { useAnalysisRunsQuery, useSignalsQuery } from "@/hooks/useTradeQueries";
-import { formatCompactNumber, formatPercent } from "@/lib/formatters";
 import {
-  signals as mockSignals,
-  signalStats as mockSignalStats,
-  tradingPairs
-} from "@/lib/mockSignals";
+  useAnalysisRunsQuery,
+  usePerformanceQuery,
+  usePipelineStatusQuery,
+  useSignalsQuery
+} from "@/hooks/useTradeQueries";
+import { PREVIEW_DATA_ENABLED } from "@/lib/env";
+import { formatPercent } from "@/lib/formatters";
+import { signals as mockSignals, tradingPairs } from "@/lib/mockSignals";
+import { formatR } from "@/lib/outcome";
 import { useUIStore } from "@/store/uiStore";
-import type { Signal, SignalStats, TradingPair } from "@/types/signal";
+import type { Signal, TradingPair } from "@/types/signal";
 
-const intelligenceItems = [
-  {
-    label: "Market scan",
-    value: "3 active pairs",
-    tone: "success"
-  },
-  {
-    label: "Provider mode",
-    value: "AI ready",
-    tone: "info"
-  },
-  {
-    label: "Scheduler",
-    value: "15 min cadence",
-    tone: "neutral"
-  }
-] as const;
+const DASH = "—";
+
+function formatProfitFactor(value: number | null | undefined): string {
+  return value === null || value === undefined ? DASH : value.toFixed(2);
+}
 
 export function DashboardShell() {
   const { pairsQuery, signalsQuery } = useSignalsQuery();
   const analysisRunsQuery = useAnalysisRunsQuery();
+  const performanceQuery = usePerformanceQuery();
+  const pipelineQuery = usePipelineStatusQuery();
   const density = useUIStore((state) => state.density);
   const setDensity = useUIStore((state) => state.setDensity);
 
-  const pairs = pairsQuery.data ?? tradingPairs;
-  const signals = signalsQuery.data?.signals ?? mockSignals;
-  const stats = calculateSignalStats(signals, pairs);
-  const latestRun = analysisRunsQuery.data?.data[0];
-  const isLoadingSignals = (pairsQuery.isLoading || signalsQuery.isLoading) && !signalsQuery.data;
   const apiError = pairsQuery.error ?? signalsQuery.error;
-  const isPreviewData = Boolean(apiError);
+  // Only show bundled sample data when preview mode is explicitly enabled —
+  // otherwise the dashboard reflects real state (empty until the API responds).
+  const showPreview = Boolean(apiError) && PREVIEW_DATA_ENABLED;
+
+  const pairs: TradingPair[] = pairsQuery.data ?? (showPreview ? tradingPairs : []);
+  const signals: Signal[] = signalsQuery.data?.signals ?? (showPreview ? mockSignals : []);
+  const performance = performanceQuery.data ?? null;
+
+  const isLoadingSignals = (pairsQuery.isLoading || signalsQuery.isLoading) && !signalsQuery.data;
+  const latestRun = analysisRunsQuery.data?.data[0];
+
+  // ── Real, derived metrics (no fabricated numbers) ───────────────────────────
+  const monitoredPairs = pairs.filter((pair) => pair.isActive).length;
+  const activeSignals = signals.filter((signal) => signal.status === "active").length;
+  const averageConfidence =
+    signals.length > 0
+      ? signals.reduce((sum, signal) => sum + signal.confidence, 0) / signals.length
+      : 0;
+  // Win rate / R come from the closed track record, not the live queue — so they
+  // are real telemetry and `—` until trades have actually resolved.
+  const overall = performance?.overall;
+  const hasTrackRecord = (overall?.total ?? 0) > 0;
+  const winRateLabel = hasTrackRecord ? formatPercent(overall!.winRate) : DASH;
+  const cadenceMinutes = pipelineQuery.data?.interval_minutes ?? null;
+  const cadenceLabel = cadenceMinutes !== null ? `${cadenceMinutes}m` : DASH;
+
+  const engineItems: Array<{ label: string; value: string; tone: "success" | "info" | "neutral" }> = [
+    { label: "Monitored pairs", value: `${monitoredPairs} active`, tone: "success" },
+    {
+      label: "Provider",
+      value: latestRun?.ai_provider ?? pipelineQuery.data?.last_run?.ai_provider ?? "—",
+      tone: "info"
+    },
+    {
+      label: "Scheduler",
+      value: cadenceMinutes !== null ? `${cadenceMinutes} min cadence` : "—",
+      tone: "neutral"
+    }
+  ];
 
   function refreshMarketData() {
     void pairsQuery.refetch();
     void signalsQuery.refetch();
     void analysisRunsQuery.refetch();
+    void performanceQuery.refetch();
+    void pipelineQuery.refetch();
   }
 
   return (
@@ -77,9 +105,9 @@ export function DashboardShell() {
                   built for fast decisions.
                 </p>
                 <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                  <HeroPill label="Conviction" value={formatPercent(stats.averageConfidence)} />
-                  <HeroPill label="Model edge" value={formatPercent(stats.modelWinRate)} />
-                  <HeroPill label="Live setups" value={stats.activeSignals.toString()} />
+                  <HeroPill label="Conviction" value={formatPercent(averageConfidence)} />
+                  <HeroPill label="Model edge" value={winRateLabel} />
+                  <HeroPill label="Live setups" value={activeSignals.toString()} />
                 </div>
               </div>
               <Button
@@ -102,27 +130,33 @@ export function DashboardShell() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Metric label="Active signals" value={stats.activeSignals.toString()} />
-              <Metric label="Average confidence" value={formatPercent(stats.averageConfidence)} />
-              <Metric label="Model win rate" value={formatPercent(stats.modelWinRate)} />
+              <Metric label="Active signals" value={activeSignals.toString()} />
+              <Metric label="Average confidence" value={formatPercent(averageConfidence)} />
               <div className="border-t border-[var(--panel-border)] pt-4">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm text-[var(--muted)]">Capital posture</span>
-                  <Badge tone="success">Controlled</Badge>
+                  <span className="text-sm text-[var(--muted)]">Track record</span>
+                  <span className="text-xs font-medium text-[var(--muted)]">
+                    {hasTrackRecord ? `${overall!.total} closed` : "no closed trades yet"}
+                  </span>
                 </div>
                 <div className="mt-4 space-y-3">
-                  <PulseBar label="Conviction" tone="gold" value={73} />
-                  <PulseBar label="Exposure" tone="blue" value={42} />
-                  <PulseBar label="Risk load" tone="red" value={28} />
+                  <Metric label="Win rate" value={winRateLabel} />
+                  <Metric label="Profit factor" value={formatProfitFactor(overall?.profitFactor)} />
+                  <Metric
+                    label="Net R"
+                    value={hasTrackRecord ? (formatR(overall!.totalR) ?? DASH) : DASH}
+                  />
                 </div>
               </div>
               <div className="rounded-lg border border-[#244d7d] bg-[var(--blue-soft)] p-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-[var(--blue-strong)]">
-                  <LineChart className="h-4 w-4" />
+                  <Clock3 className="h-4 w-4" />
                   Next decision window
                 </div>
                 <p className="mt-2 text-sm leading-6 text-[#b9c7d9]">
-                  Re-score active setups after the next 1h candle closes.
+                  {cadenceMinutes !== null
+                    ? `The pipeline re-scans every ${cadenceMinutes} minutes; setups refresh automatically.`
+                    : "Setups refresh automatically as each scheduled scan completes."}
                 </p>
               </div>
             </CardContent>
@@ -130,12 +164,9 @@ export function DashboardShell() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Monitored pairs" value={stats.monitoredPairs.toString()} />
-          <StatCard label="Analysis cadence" value={`${stats.analysisCadenceMinutes}m`} />
-          <StatCard
-            label="Monthly signal volume"
-            value={formatCompactNumber(stats.monthlySignalVolume)}
-          />
+          <StatCard label="Monitored pairs" value={monitoredPairs.toString()} />
+          <StatCard label="Analysis cadence" value={cadenceLabel} />
+          <StatCard label="Win rate" value={winRateLabel} />
           <StatCard label="UI density" value={density} />
         </div>
 
@@ -149,7 +180,7 @@ export function DashboardShell() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {intelligenceItems.map((item) => (
+                {engineItems.map((item) => (
                   <div className="flex items-center justify-between gap-3" key={item.label}>
                     <span className="text-sm text-[var(--muted)]">{item.label}</span>
                     <Badge tone={item.tone}>{item.value}</Badge>
@@ -203,11 +234,11 @@ export function DashboardShell() {
 
             <PipelineStatusBanner />
 
-            {isPreviewData && apiError ? (
+            {apiError ? (
               <ErrorState
                 error={apiError}
                 onRetry={refreshMarketData}
-                title="Live API unavailable, showing preview data"
+                title={showPreview ? "Live API unavailable, showing preview data" : "Live API unavailable"}
               />
             ) : null}
 
@@ -221,27 +252,6 @@ export function DashboardShell() {
       </section>
     </div>
   );
-}
-
-function calculateSignalStats(signals: Signal[], pairs: TradingPair[]): SignalStats {
-  if (signals.length === 0) {
-    return {
-      ...mockSignalStats,
-      activeSignals: 0,
-      averageConfidence: 0,
-      monitoredPairs: pairs.filter((pair) => pair.isActive).length,
-      monthlySignalVolume: 0
-    };
-  }
-
-  return {
-    activeSignals: signals.filter((signal) => signal.status === "active").length,
-    averageConfidence: signals.reduce((sum, signal) => sum + signal.confidence, 0) / signals.length,
-    modelWinRate: mockSignalStats.modelWinRate,
-    monitoredPairs: pairs.filter((pair) => pair.isActive).length,
-    analysisCadenceMinutes: mockSignalStats.analysisCadenceMinutes,
-    monthlySignalVolume: Math.max(signals.length * 320, signals.length)
-  };
 }
 
 function DensitySwitch({
@@ -298,34 +308,6 @@ function StatCard({ label, value }: { label: string; value: string }) {
         <p className="mt-3 text-3xl font-semibold capitalize text-[#fff8df]">{value}</p>
       </CardContent>
     </Card>
-  );
-}
-
-function PulseBar({
-  label,
-  tone,
-  value
-}: {
-  label: string;
-  tone: "gold" | "blue" | "red";
-  value: number;
-}) {
-  const colorClass = {
-    gold: "bg-[var(--gold)]",
-    blue: "bg-[var(--blue)]",
-    red: "bg-[var(--red)]"
-  }[tone];
-
-  return (
-    <div>
-      <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide">
-        <span className="text-[#7f8da3]">{label}</span>
-        <span className="text-[#fff8df]">{value}%</span>
-      </div>
-      <div className="mt-2 h-2 rounded-full bg-[#0b111b]">
-        <div className={`h-2 rounded-full ${colorClass}`} style={{ width: `${value}%` }} />
-      </div>
-    </div>
   );
 }
 

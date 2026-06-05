@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { RefreshCw, X } from "lucide-react";
@@ -14,10 +14,10 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { useSignalFilters, toSignalListParams } from "@/hooks/useSignalFilters";
 import { useInfiniteSignalsQuery } from "@/hooks/useTradeQueries";
-import { refineSignals } from "@/lib/signalFilters";
+import { PREVIEW_DATA_ENABLED } from "@/lib/env";
 import { signals as mockSignals, tradingPairs } from "@/lib/mockSignals";
-import { useSignalStore } from "@/store/signalStore";
 import { useUIStore } from "@/store/uiStore";
 import type { Signal } from "@/types/signal";
 
@@ -26,19 +26,17 @@ const subscribeToHydration = () => () => undefined;
 
 export function SignalsBrowsePage() {
   const searchParams = useSearchParams();
-  const pairParam = searchParams.get("pair");
   const runParam = searchParams.get("run");
-  const pairFilter = pairParam && pairParam !== "all" ? pairParam : undefined;
+  const { filters, reset } = useSignalFilters();
 
-  const query = useInfiniteSignalsQuery({ pair: pairFilter, runId: runParam ?? undefined });
+  // The server applies every filter and the sort (see toSignalListParams), so
+  // the rendered list, the total, and the order are always consistent — no
+  // client-side refinement over partially-loaded pages.
+  const query = useInfiniteSignalsQuery({
+    ...toSignalListParams(filters),
+    runId: runParam ?? undefined
+  });
 
-  const direction = useSignalStore((state) => state.direction);
-  const tradeStyle = useSignalStore((state) => state.tradeStyle);
-  const status = useSignalStore((state) => state.status);
-  const outcome = useSignalStore((state) => state.outcome);
-  const storePair = useSignalStore((state) => state.pair);
-  const sort = useSignalStore((state) => state.sort);
-  const reset = useSignalStore((state) => state.reset);
   const density = useUIStore((state) => state.density);
   const hasMounted = useSyncExternalStore(
     subscribeToHydration,
@@ -47,16 +45,18 @@ export function SignalsBrowsePage() {
   );
 
   const isQueryError = hasMounted && query.isError;
-  const hasLiveData = hasMounted && query.isSuccess && query.signals.length >= 0 && !query.isError;
-  const pairs = hasMounted && query.pairs.length > 0 ? query.pairs : tradingPairs;
-  const sourceSignals = isQueryError ? mockSignals : hasMounted ? query.signals : emptySignals;
+  // Preview mode only: never present fabricated signals as live data otherwise.
+  const showPreview = isQueryError && PREVIEW_DATA_ENABLED;
+  const hasLiveData = hasMounted && query.isSuccess && !query.isError;
 
-  // The pair filter is enforced server-side, so it's a no-op refinement here;
-  // direction/style/status/sort are applied client-side over the loaded pages.
-  const visibleSignals = useMemo(
-    () => refineSignals(sourceSignals, { direction, tradeStyle, status, outcome, pair: storePair, sort }),
-    [sourceSignals, direction, tradeStyle, status, outcome, storePair, sort]
-  );
+  const pairs =
+    hasMounted && query.pairs.length > 0
+      ? query.pairs
+      : PREVIEW_DATA_ENABLED
+        ? tradingPairs
+        : [];
+  const visibleSignals = showPreview ? mockSignals : hasMounted ? query.signals : emptySignals;
+  const total = showPreview ? mockSignals.length : query.total;
 
   const isInitialLoading = !hasMounted || (query.isLoading && !query.isError);
 
@@ -71,7 +71,7 @@ export function SignalsBrowsePage() {
           </p>
           {hasLiveData ? (
             <p className="mt-2 text-xs font-medium text-[var(--muted)]">
-              {query.total} total signals ·{" "}
+              {total} matching {total === 1 ? "signal" : "signals"} ·{" "}
               <RelativeTime prefix="updated" value={query.dataUpdatedAt} intervalMs={5_000} />
             </p>
           ) : null}
@@ -102,7 +102,7 @@ export function SignalsBrowsePage() {
         <ErrorState
           error={query.error as Error}
           onRetry={() => void query.refetch()}
-          title="Live API unavailable, showing preview data"
+          title={showPreview ? "Live API unavailable, showing preview data" : "Live API unavailable"}
         />
       ) : null}
 

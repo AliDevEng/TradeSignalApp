@@ -37,6 +37,16 @@ SignalOutcome = Literal[
     "cancelled",
 ]
 
+# Coarse, lifecycle-derived status the browse UI filters by (computed from
+# direction + expiry, not stored): a directional, unexpired signal is "active";
+# a neutral one is "watchlist"; a lapsed one is "expired".
+SignalStatusFilter = Literal["active", "watchlist", "expired"]
+# Outcome grouped into result categories for filtering (a "win" is any
+# take-profit rung, a "loss" is the stop, "expired" covers expired/cancelled).
+SignalResultFilter = Literal["open", "win", "loss", "expired"]
+# Server-side ordering for the signal list.
+SignalSort = Literal["confidence", "newest", "symbol"]
+
 
 class SignalResponse(BaseModel):
     """A persisted trade signal as returned by the read endpoints.

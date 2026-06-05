@@ -16,7 +16,15 @@ from fastapi import APIRouter, Query
 
 from app.dependencies import PaginationDep, SignalControllerDep
 from app.schemas.common import APIResponse, PaginatedResponse, PaginationMeta
-from app.schemas.signal import SignalOutcome, SignalResponse, SignalType
+from app.schemas.signal import (
+    SignalDirection,
+    SignalOutcome,
+    SignalResponse,
+    SignalResultFilter,
+    SignalSort,
+    SignalStatusFilter,
+    SignalType,
+)
 
 router = APIRouter(prefix="/signals", tags=["Signals"])
 
@@ -43,7 +51,23 @@ async def list_signals(
     ),
     outcome: SignalOutcome | None = Query(
         default=None,
-        description="Filter by outcome (open/hit_tp1/hit_tp2/hit_tp3/hit_sl/expired/cancelled).",
+        description="Filter by exact outcome (open/hit_tp1.../hit_sl/expired/cancelled).",
+    ),
+    direction: SignalDirection | None = Query(
+        default=None,
+        description="Filter by direction (buy/sell/neutral).",
+    ),
+    status: SignalStatusFilter | None = Query(
+        default=None,
+        description="Lifecycle status (active/watchlist/expired), derived from direction + expiry.",
+    ),
+    result: SignalResultFilter | None = Query(
+        default=None,
+        description="Result category (open/win/loss/expired); a 'win' is any take-profit.",
+    ),
+    sort: SignalSort | None = Query(
+        default=None,
+        description="Order by confidence, newest (default), or symbol.",
     ),
 ) -> PaginatedResponse[SignalResponse]:
     page = await controller.list_signals(
@@ -53,6 +77,10 @@ async def list_signals(
         analysis_run_id=run_id,
         signal_type=signal_type,
         outcome=outcome,
+        direction=direction,
+        status=status,
+        result=result,
+        sort=sort,
     )
     return PaginatedResponse(
         data=page.items,

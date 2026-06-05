@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { useInfiniteSignalsQuery } from "@/hooks/useTradeQueries";
+import { PREVIEW_DATA_ENABLED } from "@/lib/env";
 import { formatR, isClosedOutcome, outcomeCategory } from "@/lib/outcome";
 import { signals as mockSignals } from "@/lib/mockSignals";
 import { useUIStore } from "@/store/uiStore";
@@ -71,7 +72,10 @@ export function ClosedSignalsPage() {
   );
 
   const isQueryError = hasMounted && query.isError;
-  const sourceSignals = isQueryError ? mockSignals : hasMounted ? query.signals : emptySignals;
+  // Only fall back to bundled sample data when preview mode is explicitly on;
+  // production shows the error + an empty state rather than fabricated trades.
+  const showPreview = isQueryError && PREVIEW_DATA_ENABLED;
+  const sourceSignals = showPreview ? mockSignals : hasMounted ? query.signals : emptySignals;
 
   const closedSignals = useMemo(
     () =>
@@ -125,7 +129,7 @@ export function ClosedSignalsPage() {
         <ErrorState
           error={query.error as Error}
           onRetry={() => void query.refetch()}
-          title="Live API unavailable, showing preview data"
+          title={showPreview ? "Live API unavailable, showing preview data" : "Live API unavailable"}
         />
       ) : null}
 

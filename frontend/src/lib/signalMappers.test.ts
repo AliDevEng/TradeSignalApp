@@ -86,6 +86,27 @@ describe("mapApiSignal", () => {
     expect(signal.riskReward).toBeCloseTo(0.82, 2);
   });
 
+  it("returns null risk/reward when levels contradict the direction", () => {
+    // A "buy" whose stop sits ABOVE entry is geometrically broken; don't
+    // fabricate a positive R:R from absolute distances.
+    const signal = mapApiSignal(
+      buildApiSignal({ direction: "buy", entry_price: "100", stop_loss: "110", take_profit: "120" }),
+      [pair]
+    );
+
+    expect(signal.riskReward).toBeNull();
+  });
+
+  it("computes risk/reward for a coherent sell", () => {
+    const signal = mapApiSignal(
+      buildApiSignal({ direction: "sell", entry_price: "100", stop_loss: "102", take_profit: "96" }),
+      [pair]
+    );
+
+    // risk 2, reward 4 → 2.0
+    expect(signal.riskReward).toBeCloseTo(2, 5);
+  });
+
   it("normalises the indicator snapshot to camelCase", () => {
     const signal = mapApiSignal(buildApiSignal(), [pair]);
 

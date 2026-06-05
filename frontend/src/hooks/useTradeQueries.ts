@@ -104,7 +104,12 @@ export function useSignalsQuery(options: UseSignalsOptions = {}) {
  * "load more" affordance. Pages accumulate so the list grows as the user pulls
  * more from the backend.
  */
-export function useInfiniteSignalsQuery(params: Pick<SignalListParams, "pair" | "runId"> = {}) {
+type InfiniteSignalsParams = Pick<
+  SignalListParams,
+  "pair" | "runId" | "signalType" | "direction" | "status" | "result" | "sort"
+>;
+
+export function useInfiniteSignalsQuery(params: InfiniteSignalsParams = {}) {
   const pairsQuery = usePairsQuery();
   const pairs = pairsQuery.data ?? [];
 
@@ -116,8 +121,7 @@ export function useInfiniteSignalsQuery(params: Pick<SignalListParams, "pair" | 
       const response = await getSignals({
         page: pageParam,
         perPage: BROWSE_PAGE_SIZE,
-        pair: params.pair,
-        runId: params.runId
+        ...params
       });
       return response;
     },

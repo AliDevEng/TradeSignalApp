@@ -9,12 +9,22 @@ import type {
   ApiSignalType
 } from "@/types/tradeApi";
 
+export type SignalDirectionFilter = "buy" | "sell" | "neutral";
+export type SignalStatusFilter = "active" | "watchlist" | "expired";
+export type SignalResultFilter = "open" | "win" | "loss" | "expired";
+export type SignalSort = "confidence" | "newest" | "symbol";
+
 export type SignalListParams = {
   page?: number;
   perPage?: number;
   pair?: string;
   runId?: string;
   signalType?: ApiSignalType;
+  direction?: SignalDirectionFilter;
+  status?: SignalStatusFilter;
+  /** Result category: a "win" is any take-profit rung. */
+  result?: SignalResultFilter;
+  sort?: SignalSort;
 };
 
 export type AnalysisRunListParams = {
@@ -40,7 +50,11 @@ export async function getSignals(params: SignalListParams = {}): Promise<Paginat
       per_page: params.perPage,
       pair: params.pair,
       run_id: params.runId,
-      signal_type: params.signalType
+      signal_type: params.signalType,
+      direction: params.direction,
+      status: params.status,
+      result: params.result,
+      sort: params.sort
     }
   });
 

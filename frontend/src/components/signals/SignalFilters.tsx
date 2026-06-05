@@ -1,213 +1,74 @@
 "use client";
 
-import { useEffect } from "react";
-import { useForm, useWatch } from "react-hook-form";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { SlidersHorizontal, X } from "lucide-react";
-import { z } from "zod";
+import { X } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
-import { useSignalStore, type SignalSort } from "@/store/signalStore";
-import type { SignalDirection, SignalStatus, SignalTradeStyle, TradingPair } from "@/types/signal";
+import { useSignalFilters, type SignalFilterValues } from "@/hooks/useSignalFilters";
+import type { TradingPair } from "@/types/signal";
 
 type SignalFiltersProps = {
   pairs: TradingPair[];
 };
 
-const directions: Array<"all" | SignalDirection> = ["all", "buy", "sell", "neutral"];
-const tradeStyles: Array<"all" | SignalTradeStyle> = ["all", "scalp", "swing"];
-const statuses: Array<"all" | SignalStatus> = ["all", "active", "watchlist", "expired"];
-const outcomes: Array<"all" | "open" | "win" | "loss" | "expired"> = [
-  "all",
-  "open",
-  "win",
-  "loss",
-  "expired"
+const directions: Array<SignalFilterValues["direction"]> = ["all", "buy", "sell", "neutral"];
+const tradeStyles: Array<SignalFilterValues["tradeStyle"]> = ["all", "scalp", "swing"];
+const statuses: Array<SignalFilterValues["status"]> = ["all", "active", "watchlist", "expired"];
+const outcomes: Array<SignalFilterValues["outcome"]> = ["all", "open", "win", "loss", "expired"];
+const sorts: Array<{ label: string; value: SignalFilterValues["sort"] }> = [
+  { label: "Confidence", value: "confidence" },
+  { label: "Newest", value: "newest" },
+  { label: "Symbol", value: "symbol" }
 ];
-const outcomeLabels: Record<(typeof outcomes)[number], string> = {
+
+const outcomeLabels: Record<SignalFilterValues["outcome"], string> = {
   all: "All outcomes",
   open: "Open",
   win: "Wins",
   loss: "Losses",
   expired: "Expired"
 };
-const sorts: Array<{ label: string; value: SignalSort }> = [
-  { label: "Confidence", value: "confidence" },
-  { label: "Newest", value: "newest" },
-  { label: "Symbol", value: "symbol" }
-];
 
-const filterSchema = z.object({
-  direction: z.enum(directions),
-  tradeStyle: z.enum(tradeStyles),
-  status: z.enum(statuses),
-  outcome: z.enum(outcomes),
-  pair: z.string().min(1, "Choose a pair filter."),
-  sort: z.enum(["confidence", "newest", "symbol"])
-});
+const selectClass =
+  "h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]";
+const labelClass =
+  "grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]";
 
-type SignalFilterFormValues = z.infer<typeof filterSchema>;
-
-const defaultFilters: SignalFilterFormValues = {
-  direction: "all",
-  tradeStyle: "all",
-  status: "all",
-  outcome: "all",
-  pair: "all",
-  sort: "confidence"
-};
-
-function readFiltersFromSearchParams(searchParams: URLSearchParams): SignalFilterFormValues {
-  const candidate = {
-    direction: searchParams.get("direction") ?? defaultFilters.direction,
-    tradeStyle: searchParams.get("style") ?? defaultFilters.tradeStyle,
-    status: searchParams.get("status") ?? defaultFilters.status,
-    outcome: searchParams.get("outcome") ?? defaultFilters.outcome,
-    pair: searchParams.get("pair") ?? defaultFilters.pair,
-    sort: searchParams.get("sort") ?? defaultFilters.sort
-  };
-  const parsed = filterSchema.safeParse(candidate);
-
-  return parsed.success ? parsed.data : defaultFilters;
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function writeFiltersToSearchParams(values: SignalFilterFormValues): string {
-  const nextParams = new URLSearchParams();
-
-  if (values.direction !== defaultFilters.direction) {
-    nextParams.set("direction", values.direction);
-  }
-
-  if (values.tradeStyle !== defaultFilters.tradeStyle) {
-    nextParams.set("style", values.tradeStyle);
-  }
-
-  if (values.status !== defaultFilters.status) {
-    nextParams.set("status", values.status);
-  }
-
-  if (values.outcome !== defaultFilters.outcome) {
-    nextParams.set("outcome", values.outcome);
-  }
-
-  if (values.pair !== defaultFilters.pair) {
-    nextParams.set("pair", values.pair);
-  }
-
-  if (values.sort !== defaultFilters.sort) {
-    nextParams.set("sort", values.sort);
-  }
-
-  return nextParams.toString();
-}
-
+/**
+ * Server-side signal filters. Every control reads from and writes to the URL via
+ * {@link useSignalFilters}; the browse page derives its API query from the same
+ * source, so the list, the count, and the sort are always consistent (no
+ * client-side refinement over partially-loaded pages).
+ */
 export function SignalFilters({ pairs }: SignalFiltersProps) {
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const direction = useSignalStore((state) => state.direction);
-  const tradeStyle = useSignalStore((state) => state.tradeStyle);
-  const status = useSignalStore((state) => state.status);
-  const outcome = useSignalStore((state) => state.outcome);
-  const pair = useSignalStore((state) => state.pair);
-  const sort = useSignalStore((state) => state.sort);
-  const setDirection = useSignalStore((state) => state.setDirection);
-  const setTradeStyle = useSignalStore((state) => state.setTradeStyle);
-  const setStatus = useSignalStore((state) => state.setStatus);
-  const setOutcome = useSignalStore((state) => state.setOutcome);
-  const setPair = useSignalStore((state) => state.setPair);
-  const setSort = useSignalStore((state) => state.setSort);
-  const reset = useSignalStore((state) => state.reset);
-
-  const form = useForm<SignalFilterFormValues>({
-    defaultValues: readFiltersFromSearchParams(searchParams),
-    mode: "onChange"
-  });
-  const values = useWatch({ control: form.control });
-
-  useEffect(() => {
-    form.reset(readFiltersFromSearchParams(searchParams));
-  }, [form, searchParams]);
-
-  useEffect(() => {
-    const candidate = {
-      direction: values.direction ?? direction,
-      tradeStyle: values.tradeStyle ?? tradeStyle,
-      status: values.status ?? status,
-      outcome: values.outcome ?? outcome,
-      pair: values.pair ?? pair,
-      sort: values.sort ?? sort
-    };
-    const parsed = filterSchema.safeParse(candidate);
-
-    if (!parsed.success) {
-      return;
-    }
-
-    setDirection(parsed.data.direction);
-    setTradeStyle(parsed.data.tradeStyle);
-    setStatus(parsed.data.status);
-    setOutcome(parsed.data.outcome);
-    setPair(parsed.data.pair);
-    setSort(parsed.data.sort);
-
-    const nextQuery = writeFiltersToSearchParams(parsed.data);
-    const currentQuery = searchParams.toString();
-
-    if (nextQuery !== currentQuery) {
-      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-    }
-  }, [
-    direction,
-    outcome,
-    pathname,
-    pair,
-    router,
-    searchParams,
-    setDirection,
-    setOutcome,
-    setPair,
-    setSort,
-    setStatus,
-    setTradeStyle,
-    sort,
-    status,
-    tradeStyle,
-    values.direction,
-    values.outcome,
-    values.pair,
-    values.sort,
-    values.status,
-    values.tradeStyle
-  ]);
-
-  function resetFilters() {
-    form.reset(defaultFilters);
-    reset();
-    router.replace(pathname, { scroll: false });
-  }
+  const { filters, setFilters, reset } = useSignalFilters();
 
   return (
-    <form className="flex flex-col gap-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4 shadow-[var(--surface-shadow)]">
+    <div className="flex flex-col gap-4 rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] px-5 py-4 shadow-[var(--surface-shadow)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="h-4 w-4 text-[var(--gold)]" />
           <h2 className="text-base font-semibold text-[#fff8df]">Signal Queue</h2>
         </div>
-        <Button onClick={resetFilters} size="sm" type="button" variant="ghost">
+        <Button onClick={reset} size="sm" type="button" variant="ghost">
           <X className="h-4 w-4" />
           Reset
         </Button>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_180px]">
-        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+        <label className={labelClass}>
           Direction
           <select
-            className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            {...form.register("direction", {
-              validate: (value) => filterSchema.shape.direction.safeParse(value).success
-            })}
+            className={selectClass}
+            value={filters.direction}
+            onChange={(event) =>
+              setFilters({ direction: event.target.value as SignalFilterValues["direction"] })
+            }
           >
             {directions.map((item) => (
               <option key={item} value={item}>
@@ -217,45 +78,48 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           </select>
         </label>
 
-        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+        <label className={labelClass}>
           Style
           <select
-            className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            {...form.register("tradeStyle", {
-              validate: (value) => filterSchema.shape.tradeStyle.safeParse(value).success
-            })}
+            className={selectClass}
+            value={filters.tradeStyle}
+            onChange={(event) =>
+              setFilters({ tradeStyle: event.target.value as SignalFilterValues["tradeStyle"] })
+            }
           >
             {tradeStyles.map((item) => (
               <option key={item} value={item}>
-                {item === "all" ? "All styles" : item.charAt(0).toUpperCase() + item.slice(1)}
+                {item === "all" ? "All styles" : titleCase(item)}
               </option>
             ))}
           </select>
         </label>
 
-        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+        <label className={labelClass}>
           Status
           <select
-            className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            {...form.register("status", {
-              validate: (value) => filterSchema.shape.status.safeParse(value).success
-            })}
+            className={selectClass}
+            value={filters.status}
+            onChange={(event) =>
+              setFilters({ status: event.target.value as SignalFilterValues["status"] })
+            }
           >
             {statuses.map((item) => (
               <option key={item} value={item}>
-                {item === "all" ? "All statuses" : item}
+                {item === "all" ? "All statuses" : titleCase(item)}
               </option>
             ))}
           </select>
         </label>
 
-        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+        <label className={labelClass}>
           Outcome
           <select
-            className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            {...form.register("outcome", {
-              validate: (value) => filterSchema.shape.outcome.safeParse(value).success
-            })}
+            className={selectClass}
+            value={filters.outcome}
+            onChange={(event) =>
+              setFilters({ outcome: event.target.value as SignalFilterValues["outcome"] })
+            }
           >
             {outcomes.map((item) => (
               <option key={item} value={item}>
@@ -265,13 +129,12 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           </select>
         </label>
 
-        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+        <label className={labelClass}>
           Pair
           <select
-            className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            {...form.register("pair", {
-              validate: (value) => filterSchema.shape.pair.safeParse(value).success
-            })}
+            className={selectClass}
+            value={filters.pair}
+            onChange={(event) => setFilters({ pair: event.target.value })}
           >
             <option value="all">All pairs</option>
             {pairs.map((item) => (
@@ -282,13 +145,14 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           </select>
         </label>
 
-        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+        <label className={labelClass}>
           Sort
           <select
-            className="h-10 rounded-lg border border-[var(--panel-border)] bg-[#0d131c] px-3 text-sm font-medium normal-case tracking-normal text-[#fff8df] outline-none focus:border-[var(--gold)]"
-            {...form.register("sort", {
-              validate: (value) => filterSchema.shape.sort.safeParse(value).success
-            })}
+            className={selectClass}
+            value={filters.sort}
+            onChange={(event) =>
+              setFilters({ sort: event.target.value as SignalFilterValues["sort"] })
+            }
           >
             {sorts.map((item) => (
               <option key={item.value} value={item.value}>
@@ -298,6 +162,6 @@ export function SignalFilters({ pairs }: SignalFiltersProps) {
           </select>
         </label>
       </div>
-    </form>
+    </div>
   );
 }

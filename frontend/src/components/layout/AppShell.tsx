@@ -108,7 +108,7 @@ export function AppShell({ children }: AppShellProps) {
   }, [pathname, setLastPath]);
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-dvh overflow-x-hidden bg-[var(--background)]">
       <a
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:border focus:border-[var(--gold)] focus:bg-[#0d131c] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[#fff8df]"
         href="#main-content"

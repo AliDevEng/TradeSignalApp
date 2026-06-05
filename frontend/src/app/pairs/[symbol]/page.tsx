@@ -7,9 +7,11 @@ import { SignalLevelMap } from "@/components/charts/SignalLevelMap";
 import { SignalBadge, SignalStatusBadge } from "@/components/signals/SignalBadge";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { PREVIEW_DATA_ENABLED } from "@/lib/env";
 import { formatDateTime, formatPercent } from "@/lib/formatters";
 import { mapApiPair, mapApiSignal } from "@/lib/signalMappers";
 import { getSignalsForPair, getTradingPairBySymbol } from "@/lib/mockSignals";
+import { ApiClientError } from "@/services/api";
 import { getPair, getPairSignals } from "@/services/tradeService";
 import type { Signal, TradingPair } from "@/types/signal";
 
@@ -44,13 +46,20 @@ async function loadPairDetail(symbol: string): Promise<PairDetailData | null> {
       pair,
       signals: apiSignals.map((signal) => mapApiSignal(signal, [pair]))
     };
-  } catch {
+  } catch (error) {
+    // Genuine 404 → the pair doesn't exist → not-found.
+    if (error instanceof ApiClientError && error.status === 404) {
+      return null;
+    }
+    // API down: only fall back to sample data in preview mode; otherwise let
+    // the route error boundary handle it rather than showing fabricated data.
+    if (!PREVIEW_DATA_ENABLED) {
+      throw error;
+    }
     const pair = getTradingPairBySymbol(symbol);
-
     if (!pair) {
       return null;
     }
-
     return {
       pair,
       signals: getSignalsForPair(pair.symbol)

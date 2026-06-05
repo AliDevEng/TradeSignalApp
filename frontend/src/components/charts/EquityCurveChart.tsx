@@ -106,21 +106,43 @@ export function EquityCurveChart({ points }: EquityCurveChartProps) {
     chartRef.current?.timeScale().fitContent();
   }, [data]);
 
-  if (points.length === 0) {
-    return (
-      <EmptyState
-        description="The equity curve plots cumulative R as signals close. Once trades resolve, it will chart here."
-        title="No closed trades yet"
-      />
-    );
-  }
+  const isEmpty = points.length === 0;
 
+  // The container must always be mounted, otherwise the one-time `createChart`
+  // effect runs against a missing node and never re-runs — leaving the chart
+  // blank when data arrives after an initially-empty render (the common
+  // no-closed-trades-yet → first-close path). The empty state overlays instead.
   return (
-    <div
-      aria-label="Equity curve: cumulative realised R over closed signals."
-      className="h-[360px] w-full overflow-hidden rounded-lg border border-[var(--panel-border)]"
-      ref={containerRef}
-      role="img"
-    />
+    <div className="relative h-[360px] w-full overflow-hidden rounded-lg border border-[var(--panel-border)]">
+      <div
+        aria-hidden={isEmpty}
+        aria-label="Equity curve: cumulative realised R over closed signals."
+        className="h-full w-full"
+        ref={containerRef}
+        role="img"
+      />
+      {isEmpty ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#0d131c]">
+          <EmptyState
+            description="The equity curve plots cumulative R as signals close. Once trades resolve, it will chart here."
+            title="No closed trades yet"
+          />
+        </div>
+      ) : (
+        <p className="sr-only">{summarise(points)}</p>
+      )}
+    </div>
+  );
+}
+
+/** A screen-reader summary of the curve, since the canvas itself is opaque to AT. */
+function summarise(points: EquityPoint[]): string {
+  const final = points[points.length - 1]?.cumulativeR ?? 0;
+  const values = points.map((point) => point.cumulativeR);
+  const peak = Math.max(...values);
+  const trough = Math.min(...values);
+  return (
+    `Equity curve over ${points.length} closed ${points.length === 1 ? "signal" : "signals"}. ` +
+    `Final cumulative ${final.toFixed(2)}R, peak ${peak.toFixed(2)}R, trough ${trough.toFixed(2)}R.`
   );
 }

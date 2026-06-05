@@ -98,16 +98,37 @@ function buildTargets(signal: ApiSignal, entry: number): SignalTarget[] {
   });
 }
 
-function computeRiskReward(entry: number, stopLoss: number | null, firstTarget: number | null): number | null {
-  if (stopLoss === null || firstTarget === null || entry === stopLoss) {
+/**
+ * Risk-to-reward for the first target, computed with direction-aware *signed*
+ * distances. Returns null when the geometry contradicts the direction (a buy
+ * whose stop sits above entry, or whose target sits below it — and the reverse
+ * for a sell) instead of masking it with `Math.abs`, so a broken signal shows
+ * "—" rather than a plausible-looking ratio.
+ */
+function computeRiskReward(
+  direction: ApiSignal["direction"],
+  entry: number,
+  stopLoss: number | null,
+  firstTarget: number | null
+): number | null {
+  if (stopLoss === null || firstTarget === null) {
     return null;
   }
 
-  const risk = Math.abs(entry - stopLoss);
-  const reward = Math.abs(firstTarget - entry);
+  let risk: number;
+  let reward: number;
+  if (direction === "buy") {
+    risk = entry - stopLoss;
+    reward = firstTarget - entry;
+  } else if (direction === "sell") {
+    risk = stopLoss - entry;
+    reward = entry - firstTarget;
+  } else {
+    return null; // neutral has no actionable R:R
+  }
 
-  if (risk === 0) {
-    return null;
+  if (risk <= 0 || reward <= 0) {
+    return null; // levels inconsistent with the stated direction
   }
 
   return reward / risk;
@@ -204,7 +225,7 @@ export function mapApiSignal(signal: ApiSignal, pairs: TradingPair[]): Signal {
     timeframe: normalizeTimeframe(signal.timeframe),
     generatedAt: signal.generated_at,
     expiresAt: signal.expires_at,
-    riskReward: computeRiskReward(entryPrice, stopLoss, targets[0]?.price ?? null),
+    riskReward: computeRiskReward(signal.direction, entryPrice, stopLoss, targets[0]?.price ?? null),
     rationale: signal.rationale ?? "No rationale was supplied for this signal.",
     reasoning: buildReasoning(signal),
     indicators: mapIndicators(signal.indicators_snapshot),

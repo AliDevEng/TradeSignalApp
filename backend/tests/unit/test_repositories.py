@@ -38,6 +38,7 @@ from app.models import (
     AnalysisRunStatus,
     Pair,
     Signal,
+    SignalDirection,
     SignalOutcome,
     SignalType,
 )
@@ -515,6 +516,62 @@ async def test_signal_list_paginated_attaches_loader_option_when_requested():
     options_with = stmt_with._with_options  # type: ignore[attr-defined]
 
     assert len(options_with) == len(options_without) + 1
+
+
+async def test_signal_list_paginated_pushes_direction_result_status_and_sort():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+    now = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+
+    await repo.list_paginated(
+        offset=0,
+        limit=10,
+        direction=SignalDirection.BUY,
+        result="win",
+        status="active",
+        sort="confidence",
+        now=now,
+    )
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "direction = 'buy'" in sql
+    # "win" expands to the take-profit rungs.
+    assert "outcome in ('hit_tp1', 'hit_tp2', 'hit_tp3')" in sql
+    # "active" = directional and not expired.
+    assert "direction != 'neutral'" in sql
+    assert "expires_at is null or signals.expires_at >=" in sql
+    # confidence sort, with generated_at as the deterministic tiebreak.
+    assert "order by signals.confidence desc" in sql
+
+
+async def test_signal_list_paginated_symbol_sort_joins_pair():
+    session = _make_session()
+    session.execute.return_value = _result_with_scalars([])
+    repo = SignalRepository(session)
+
+    await repo.list_paginated(offset=0, limit=10, sort="symbol")
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "join pairs" in sql
+    assert "order by pairs.symbol" in sql
+
+
+async def test_signal_count_filtered_shares_filters_with_list():
+    session = _make_session()
+    result = MagicMock()
+    result.scalar_one.return_value = 3
+    session.execute.return_value = result
+    repo = SignalRepository(session)
+    now = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+
+    await repo.count_filtered(direction=SignalDirection.SELL, status="expired", now=now)
+
+    sql = _compile(session.execute.call_args.args[0]).lower()
+    assert "count(*)" in sql
+    assert "direction = 'sell'" in sql
+    assert "expires_at is not null" in sql
+    assert "expires_at <" in sql
 
 
 async def test_signal_count_filtered_emits_count_star():
