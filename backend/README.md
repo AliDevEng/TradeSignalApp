@@ -254,40 +254,73 @@ Goal: turn a signal into an exact, account-aware trade.
 
 ---
 
-## 🏗️ Architecture (Iteration 1 deliverable)
+## 🏗️ Architecture
+
+The structure below reflects the project **as it stands through Iteration 12**. The
+MVC layering and the response-envelope/error-handling contracts were set in
+Iterations 1–4; later iterations added new services, controllers, views, and
+background jobs *without* changing those rules — every feature slots into the same
+seams. Module annotations note the iteration that introduced each one.
 
 ```
 app/
 ├── __init__.py               # Single source of truth: __version__
-├── main.py                   # create_app() factory + global exception handlers
+├── main.py                   # create_app() factory + lifespan (constructs providers,
+│                             #   scheduler, event bus, notifier/dispatcher on app.state)
 ├── config.py                 # Settings (typed, validated, fail-fast)
 ├── logging_config.py         # Centralised logging (dictConfig, idempotent)
-├── dependencies.py           # Cross-cutting FastAPI dependencies (Pagination, …)
+├── dependencies.py           # Cross-cutting FastAPI deps (Pagination, repos, controllers,
+│                             #   app-state accessors for providers/scheduler/bus)
+├── error_handlers.py         # register_exception_handlers() — domain error → envelope (It4)
+├── timeframes.py             # Timeframe ordering/granularity helpers (It6)
 │
 ├── schemas/                  # Wire-format Pydantic models — transport-agnostic
 │   ├── common.py             # APIResponse[T], ErrorResponse, PaginatedResponse[T]
-│   └── health.py             # HealthResponse, ComponentStatus (Literal states)
+│   ├── health.py             # HealthResponse, ComponentStatus (Literal states)
+│   ├── signal.py  pair.py  analysis.py        # core read/write contracts (It4)
+│   ├── performance.py        # track-record summary/calibration/equity (It8)
+│   ├── calendar.py           # upcoming economic events (It10)
+│   └── risk.py               # position-size request/response (It12)
 │
-├── views/                    # FastAPI routers (V in MVC)
+├── views/                    # FastAPI routers (V in MVC) — thin HTTP translation only
 │   ├── __init__.py           # api_v1_router — bundles all sub-routers under /api/v1
-│   ├── health.py             # GET /api/v1/health
-│   ├── signals.py            # placeholder (Iteration 4)
-│   ├── pairs.py              # placeholder (Iteration 4)
-│   └── analysis.py           # placeholder (Iteration 4)
+│   ├── health.py             # GET /health (+ notifications/scheduler components)
+│   ├── signals.py  pairs.py  analysis.py      # core CRUD-ish reads + manual run (It4)
+│   ├── performance.py        # GET /performance (It8)
+│   ├── calendar.py           # GET /calendar (It10)
+│   ├── stream.py             # GET /stream — Server-Sent Events (It11)
+│   └── risk.py               # POST /risk/position-size (It12)
 │
-├── controllers/              # Business logic (Iteration 4)
-├── models/                   # SQLAlchemy models (Iteration 2)
-├── database/                 # Engine, sessions, repositories (Iteration 2)
+├── controllers/              # Business logic (the C in MVC)
+│   ├── analysis_controller.py        # the write-side pipeline orchestrator (It4)
+│   ├── signal_controller.py  pair_controller.py  analysis_run_controller.py  # reads (It4)
+│   ├── outcome_controller.py         # evaluate + persist signal outcomes (It7)
+│   ├── performance_controller.py     # aggregate the track record (It8)
+│   ├── calendar_controller.py        # upcoming events for the banner (It10)
+│   ├── risk_controller.py            # stateless position sizing (It12)
+│   ├── results.py                    # Page[T] carrier;  exceptions.py # ResourceNotFoundError
 │
-├── services/                 # External integrations + pure computation (Iteration 3)
+├── models/                   # SQLAlchemy models (It2) — pair, analysis_run, signal, base
+├── database/                 # Engine/session adapter + repository/ query surface (It2)
+│
+├── services/                 # External integrations + PURE computation (never import views/controllers)
 │   ├── __init__.py           # ServiceError — single base for all service failures
-│   ├── market_data/          # Candle value object, MarketDataProvider ABC, TwelveDataProvider, factory
-│   ├── indicators/           # IndicatorCalculator (pure) → IndicatorSnapshot
-│   └── ai/                   # AIProvider template + GroqProvider/AnthropicProvider, SignalDraft, factory
+│   ├── market_data/          # Candle VO, provider ABC, TwelveDataProvider, CachingProvider (It3/It6)
+│   ├── indicators/           # IndicatorCalculator (pure) → IndicatorSnapshot (It3, extended It10)
+│   ├── ai/                   # provider template + Groq/Anthropic, pricing table, usage (It3/It9)
+│   ├── outcome/              # OutcomeEvaluator (pure: candles → outcome + R/MFE/MAE) (It7)
+│   ├── performance/          # PerformanceCalculator (pure aggregator) (It8)
+│   ├── structure/            # StructureAnalyzer (pure: swing highs/lows, S/R) (It10)
+│   ├── signal_quality/       # SignalGate (pure: bias → actionable verdict + score) (It10)
+│   ├── calendar/             # EconomicCalendarProvider ABC + null/static + factory (It10)
+│   ├── events/               # EventPublisher ABC + EventBus (SSE fan-out, replay) (It11)
+│   ├── notifications/        # Notifier ABC + Telegram, pure preferences, dispatcher (It11)
+│   └── risk/                 # contract specs + pure position_sizing (It12)
 │
-└── tasks/                    # Background scheduling (Iteration 3)
-    ├── scheduler.py          # Scheduler adapter over APScheduler AsyncIOScheduler
-    └── analysis_job.py       # AnalysisJob (error-isolating wrapper) + placeholder pipeline
+└── tasks/                    # Background scheduling
+    ├── scheduler.py          # Scheduler adapter over APScheduler AsyncIOScheduler (It3)
+    ├── analysis_job.py       # AnalysisJob — error-isolating wrapper over the pipeline (It3/It4)
+    └── outcome_job.py        # OutcomeJob — runs the outcome sweep on its own cadence (It7)
 ```
 
 ### Layering rules
@@ -295,12 +328,13 @@ app/
 | Layer | May import | May NOT import |
 |---|---|---|
 | `schemas/` | `pydantic`, stdlib | `fastapi`, `sqlalchemy`, services |
-| `dependencies.py` | `fastapi`, schemas, config | controllers, services |
+| `dependencies.py` | `fastapi`, schemas, config, controllers, repositories | — |
 | `views/` | dependencies, schemas, controllers | services directly, `database/` directly |
-| `controllers/` | services, repositories, schemas | `views/`, `fastapi` |
+| `controllers/` | services, repositories, schemas, models, config | `views/`, `fastapi` |
 | `services/` | stdlib, third-party SDKs, schemas | `views/`, controllers |
+| `tasks/` | controllers, config | `views/`, `fastapi` |
 
-This is what keeps the project deployable in pieces and testable without spinning up the framework.
+This is what keeps the project deployable in pieces and testable without spinning up the framework. Note the pure-computation services (`outcome`, `performance`, `structure`, `signal_quality`, `risk`) take and return plain value objects — no ORM rows, no IO — so the maths is unit-tested directly and is fully back-testable.
 
 ### Response envelopes
 
@@ -380,8 +414,8 @@ generated constraint and index names are deterministic.
 | Table | Purpose | Notable fields / constraints |
 |---|---|---|
 | `pairs` | Lookup of tradable instruments (e.g. `EURUSD`, `XAUUSD`) | `symbol` unique + indexed, `is_active` (soft-disable) |
-| `analysis_runs` | One row per scheduled/manual pipeline execution | `status` + `trigger` are native PG enums; check constraint forces `finished_at >= started_at`; AI provider/model snapshotted for traceability |
-| `signals` | AI-generated trade signals | `direction` enum, `confidence` ∈ [0,1] (CHECK), `entry_price`/`stop_loss`/`take_profit` as `Numeric(20,8)`, `indicators_snapshot` as JSONB, composite index `(pair_id, generated_at)` for the "latest signals per pair" query, unique `(pair_id, analysis_run_id)` so a single run can't emit duplicate signals for a pair |
+| `analysis_runs` | One row per scheduled/manual pipeline execution | `status` + `trigger` are native PG enums; check constraint forces `finished_at >= started_at`; AI provider/model snapshotted for traceability; `prompt_tokens`/`completion_tokens`/`cost_usd` cost tracking (It9, all nullable, non-negative CHECKs) |
+| `signals` | AI-generated trade signals | `direction`/`signal_type`/`outcome` native enums, `confidence` ∈ [0,1] (CHECK), `entry_price`/`stop_loss`/`take_profit` as `Numeric(20,8)`, `indicators_snapshot` as JSONB, composite index `(pair_id, generated_at)`, unique `(pair_id, analysis_run_id)`. Outcome tracking (It7): `closed_at`, `realized_r`, `mfe`/`mae`, `last_evaluated_at`, indexed `outcome`. Quality gate (It10): `should_trade` (indexed), `quality_score` (∈[0,1] CHECK), `quality_snapshot` JSONB |
 
 Foreign-key behaviour:
 - `signals.pair_id → pairs.id` is `ON DELETE CASCADE`. Removing a pair
@@ -493,7 +527,7 @@ call site, so query churn stays contained when the schema evolves.
 |---|---|
 | `BaseRepository[ModelT]` | `get`, `add`, `add_all`, `delete`, `delete_where`, `list`, `count`, `exists`, `flush` — generic primitives |
 | `PairRepository` | `get_by_symbol` (case-insensitive), `list_active`, `list_all`, `upsert_by_symbol` (idempotent seed) |
-| `SignalRepository` | `latest_for_pair`, `list_paginated` (with optional `selectinload(pair)`), `count_filtered`, `list_for_run`, `delete_expired` |
+| `SignalRepository` | `latest_for_pair`, `list_paginated` (with optional `selectinload(pair)`), `count_filtered`, `list_for_run`, `delete_expired`; outcome surface (It7) `list_open`, `mark_outcome` + an `outcome` filter; performance/feedback reads (It8/It9) `list_closed_for_performance`, `list_recent_closed` |
 | `AnalysisRunRepository` | `list_recent`, `list_paginated`, `count_filtered`, `get_latest_successful` |
 
 **Transaction boundaries are not the repository's concern.** Repos

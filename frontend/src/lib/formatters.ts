@@ -34,6 +34,21 @@ export function formatCurrency(value: number, currency = "USD"): string {
   }
 }
 
+/**
+ * A USD cost that may be sub-cent (AI run costs are often fractions of a cent):
+ * 2 decimals for ≥ $1, otherwise up to 4 significant decimals so a $0.0012 run
+ * isn't rounded to $0.00. e.g. 1.5 → "$1.50", 0.0012 → "$0.0012".
+ */
+export function formatUsdCost(value: number): string {
+  const maximumFractionDigits = value >= 1 ? 2 : 4;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits
+  }).format(value);
+}
+
 export function formatCompactNumber(value: number): string {
   return new Intl.NumberFormat("en-US", {
     notation: "compact",

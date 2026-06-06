@@ -165,6 +165,27 @@ export type ApiAnalysisRun = {
   ai_provider: string | null;
   ai_model: string | null;
   error_message: string | null;
+  // AI token usage + estimated cost for the run (Iteration 9). All nullable: a
+  // provider may not report usage, and an unpriced model leaves cost undefined.
+  // `cost_usd` is a Decimal money field, so it crosses the wire as a string.
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cost_usd: string | null;
+};
+
+/** One upcoming high-impact macro event (wire mirror of `EconomicEventResponse`). */
+export type ApiEconomicEvent = {
+  title: string;
+  currency: string;
+  impact: string;
+  scheduled_at: string;
+};
+
+/** `GET /api/v1/calendar` — upcoming events plus the feature's enabled state. */
+export type ApiCalendar = {
+  enabled: boolean;
+  within_hours: number;
+  events: ApiEconomicEvent[];
 };
 
 /** Coarse pipeline state from `GET /api/v1/analysis/status`. */

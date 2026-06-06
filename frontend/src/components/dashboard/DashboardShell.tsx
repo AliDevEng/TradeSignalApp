@@ -16,6 +16,8 @@ import {
   Zap
 } from "lucide-react";
 
+import { EconomicCalendarBanner } from "@/components/calendar/EconomicCalendarBanner";
+import { EconomicEventStrip } from "@/components/calendar/EconomicEventStrip";
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { HealthPanel } from "@/components/health/HealthPanel";
 import { PipelineStatusBanner } from "@/components/signals/PipelineStatusBanner";
@@ -124,6 +126,8 @@ export function DashboardShell() {
 
   return (
     <div className="space-y-5">
+      <EconomicCalendarBanner />
+      <EconomicEventStrip />
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="rounded-lg border border-[#2a3445] bg-[#0d131c] p-4 shadow-[var(--surface-shadow)] sm:p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">

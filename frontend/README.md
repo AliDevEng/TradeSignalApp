@@ -38,6 +38,7 @@ Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain
 - Iteration 7 is complete: React Query auto-refresh (`refetchInterval`) with live "updated Xs ago" timestamps, functional notifications (new-signal toast + bell dropdown feed), a Cmd/Ctrl+K command palette with global search across pairs/signals plus quick actions, and persisted UI prefs (density + last route) in `localStorage`.
 - Iteration 9 is complete: signal outcome tracking surfaced end-to-end — an outcome badge (`✓ TP2 +2.10R` / `✗ SL -1.00R` / `Open` / `Expired`) on cards and the detail view, an outcome filter (open/win/loss/expired) with `?outcome=` URL sync, a `/closed` track-record history view (win-rate, W/L, net R) with its own nav entry, and a realised-R readout + reached-level marker on the `SignalLevelMap`. The `Signal` type now carries `outcome`/`realizedR`/`closedAt`, mapped from the backend outcome fields.
 - Iteration 10 is complete: a new `/performance` track-record dashboard (nav entry + command-palette action + breadcrumb) backed by the backend `GET /performance` endpoint. It surfaces KPI cards (win-rate, profit factor, expectancy, total R) overall and split scalp/swing, a `lightweight-charts` equity curve (cumulative R, green-above/red-below a 0R baseline), and a confidence-calibration chart (predicted vs realised hit-rate per band). New `usePerformanceQuery` hook + `performanceService` + `mapApiPerformance`, with a pure `buildPerformanceFromSignals` aggregator powering the offline preview fallback.
+- Iteration 13 is complete: macro awareness + AI transparency. A dismissible economic-calendar banner warns of the next imminent high-impact event ("⚠️ High-impact USD event in 2h: US CPI"), and a per-day event strip (Today / Tomorrow / date) sits on the dashboard — both sourced from `GET /api/v1/calendar`, rendering nothing when the feature is off or quiet (with a preview-mode sample fallback). The analysis-run detail now shows AI transparency: prompt/completion tokens and estimated `cost_usd` alongside provider/model. Every `SignalCard` carries a "calibration" hint — for the signal's stated-confidence band it shows the realised hit-rate over closed signals (from the `/performance` calibration), the honest "is the AI's confidence earned?" read, shown only once there is history. Dismissed calendar warnings persist (keyed per event) so a new release re-shows the banner.
 - Iteration 12 is complete: a risk & position-size calculator. Account inputs (balance, risk %) live in a `localStorage`-persisted Zustand store (`accountStore`), edited on `/settings` via a `react-hook-form` + `zod` form (a dependency-free `zodResolver`). A `PositionSizeWidget` on every `SignalCard` (a collapsed, on-demand disclosure so list cards don't all fetch) and on the signal detail page (open by default) calls `POST /risk/position-size` and shows the lot size, real risk $, units, per-pip value, and R:R + projected profit per take-profit — with a "configure account" CTA when unset and a clear not-affordable message when the budget can't cover the minimum lot. The backend is the single source of the sizing maths; the UI never re-implements it.
 - Iteration 11 is complete: real-time SSE streaming end-to-end — a `useEventStream` hook (mounted in `AppShell`) opens one `EventSource` to `/stream`, invalidating the affected React Query caches so the dashboard/feed/runs/performance refresh the instant something changes server-side, and raising stream-driven toasts + bell notifications (deduped against the poll-based notifier). A header `LiveIndicator` shows Live/Connecting/Offline. A new `/settings` route (nav + command-palette + bell-footer entry) carries a notification preferences panel (master toggle, min-confidence, styles, actionable-only, per-event) persisted to `localStorage` and mirroring the backend `NotificationPreferences` policy as a client-side surfacing filter, plus a Telegram connect helper (bot link + chat-id scratchpad) showing live connection status from the `/health` `notifications` component. The bell pulses on unread.
 - The first screen is now a luxury fintech operations dashboard using a black, gold, blue, and red visual system backed by live backend signal endpoints with typed mock fallback for local preview.
@@ -46,7 +47,7 @@ Note: ESLint 10 was available, but the current `eslint-config-next` plugin chain
 - `any` is not allowed by ESLint (`@typescript-eslint/no-explicit-any: error`).
 - `postcss` is overridden to `8.5.14` so `npm audit --audit-level=moderate` reports no vulnerabilities.
 - Verified with `npm run check` and local route probes returning `200 OK` for `/`, `/dashboard`, `/signals`, `/closed`, `/performance`, `/analysis`, `/analysis/[runId]`, `/settings`, `/pairs/XAUUSD`, and `/signals/sig-xauusd-1` (and `404` for unknown routes).
-- Next up: Iteration 13 (Macro Awareness & AI Transparency). See **Planned Work (Iterations 9-13)** below.
+- Iterations 9-13 are complete — the platform now surfaces outcomes, a performance track record, real-time streaming + notification controls, a risk/position-size calculator, and macro awareness + AI transparency.
 
 ## Setup Commands
 ```bash
@@ -166,7 +167,7 @@ Subtotal (Iterations 5-8): 70 points — **complete**
 
 ### Iteration 8 notes
 - **Tests:** unit/component tests run under Vitest + React Testing Library
-  (`npm run test`, 133 tests across pure libs and components as of Iteration 12).
+  (`npm run test`, 146 tests across pure libs and components as of Iteration 13).
   Playwright key-route
   smoke tests live in `e2e/` (`npm run e2e:install` then `npm run e2e`) and boot
   their own production server. `npm run check` now also runs the Vitest suite.
@@ -248,13 +249,14 @@ pairing below points one higher than the original plan.)
   `zodResolver`)
 - [x] (2) Tests for the sizing display, the wire→domain mapper, and the persisted store
 
-### Iteration 13 - Macro Awareness & AI Transparency (14 points) — pairs with backend Iterations 9 & 10
-- [ ] (4) Dismissible economic-calendar banner ("⚠️ High-impact USD event in 2h:
-  CPI") sourced from `/calendar`
-- [ ] (3) A per-day event strip on the dashboard
-- [ ] (4) AI transparency: model, token usage, and `cost_usd` per run on the analysis
-  detail; a "calibrated vs raw confidence" hint on cards
-- [ ] (3) Tests + accessibility pass on the new surfaces
+### Iteration 13 - Macro Awareness & AI Transparency (14 points) — pairs with backend Iterations 9 & 10 ✅ DONE
+- [x] (4) Dismissible economic-calendar banner ("⚠️ High-impact USD event in 2h:
+  CPI") sourced from `/calendar`, keyed dismissal persisted so a *new* event shows again
+- [x] (3) A per-day event strip on the dashboard (Today / Tomorrow / date, impact-toned)
+- [x] (4) AI transparency: model, token usage, and `cost_usd` per run on the analysis
+  detail; a "calibrated vs raw confidence" hint on cards (realised hit-rate for the
+  signal's confidence band, from the `/performance` calibration)
+- [x] (3) Tests + accessibility pass on the new surfaces
 
 Subtotal (Iterations 9-13): 76 points
 
@@ -322,8 +324,34 @@ Subtotal (Iterations 9-13): 76 points
   shows an explicit message rather than a misleading 0-lot order.
 - **Tests:** `riskMappers.test.ts` (wire→domain mapping + garbage→0),
   `PositionSizeReadout.test.tsx` (display incl. the not-affordable case), and
-  `accountStore.test.ts` (the persisted store: set/clear/configured + persistence)
-  — 133 tests total.
+  `accountStore.test.ts` (the persisted store: set/clear/configured + persistence).
+
+### Iteration 13 notes
+- **No backend changes needed:** the data already existed — `GET /api/v1/calendar`
+  (backend It10) and `prompt_tokens`/`completion_tokens`/`cost_usd` on a run
+  (backend It9). It13 is purely a frontend surfacing iteration.
+- **Calendar:** `calendarService` → `mapApiCalendar` → `useCalendar`, which applies
+  the standard preview fallback (sample events only when `NEXT_PUBLIC_PREVIEW_DATA`,
+  never in production). The selection/grouping logic is pure (`lib/calendar.ts`:
+  `nextHighImpactEvent`, `groupEventsByDay`, `impactTone`) so it is unit-tested
+  directly; the banner + strip just render it. Both render nothing when there's
+  nothing upcoming, so a disabled/quiet calendar is invisible. Dismissals are keyed
+  per event in a persisted store (`calendarDismissStore`), so a later release shows
+  the banner again. `useNow` gates first render to avoid SSR time-mismatch.
+- **AI transparency:** prompt/completion tokens + an estimated cost (`formatUsdCost`,
+  sub-cent aware) added to the analysis-run detail beside provider/model.
+- **Calibration hint:** `lib/calibration.ts::calibrationForConfidence` (pure, the
+  band match) + a `ConfidenceCalibrationHint` that reads the shared, cached
+  `/performance` calibration and renders the realised hit-rate for the signal's
+  band — only when that band has closed history, so it's never a hollow claim.
+  Because the card now reads a query, component tests render via a small
+  `renderWithClient` helper (a React Query provider wrapper).
+- **Accessibility:** the banner is `role="alert"` with an `aria-label`led dismiss
+  button; the strip uses real list semantics under a heading; icons are
+  `aria-hidden` and the calibration figure carries an explanatory `title`.
+- **Tests:** `calendar.test.ts`, `calibration.test.ts`, and
+  `EconomicCalendarBanner.test.tsx` (warn + dismiss, with the clock and calendar
+  hooks mocked) — 146 tests total.
 
 ## Run
 ```bash

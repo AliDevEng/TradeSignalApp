@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 import { useAccountStore } from "@/store/accountStore";
+import { useCalendarDismissStore } from "@/store/calendarDismissStore";
 import { useNotificationPrefsStore } from "@/store/notificationPrefsStore";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useTelegramStore } from "@/store/telegramStore";
@@ -20,6 +21,7 @@ export function StoreHydration() {
     void useNotificationPrefsStore.persist.rehydrate();
     void useTelegramStore.persist.rehydrate();
     void useAccountStore.persist.rehydrate();
+    void useCalendarDismissStore.persist.rehydrate();
   }, []);
 
   return null;

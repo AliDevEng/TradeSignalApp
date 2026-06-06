@@ -1,8 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { SignalCard } from "@/components/signals/SignalCard";
 import { buildSignal } from "@/test/fixtures";
+// SignalCard now mounts a calibration hint that reads the performance query, so
+// renders need a React Query client in scope.
+import { renderWithClient as render } from "@/test/renderWithClient";
 
 describe("SignalCard", () => {
   it("renders the symbol, confidence and entry price", () => {

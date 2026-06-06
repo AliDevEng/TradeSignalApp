@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Bot, Cpu, Layers3, RefreshCw, Timer } from "lucide-react";
+import { ArrowLeft, Bot, Coins, Cpu, Hash, Layers3, RefreshCw, Timer } from "lucide-react";
 
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { SignalCard } from "@/components/signals/SignalCard";
@@ -14,7 +14,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { useAnalysisRunQuery, useRunSignalsQuery } from "@/hooks/useTradeQueries";
 import { formatRunDuration, runStatusTone } from "@/lib/analysisRun";
-import { formatDateTime } from "@/lib/formatters";
+import { formatDateTime, formatUsdCost } from "@/lib/formatters";
 
 type AnalysisRunDetailPageProps = {
   runId: string;
@@ -100,6 +100,25 @@ export function AnalysisRunDetailPage({ runId }: AnalysisRunDetailPageProps) {
               icon={Timer}
               label="Finished"
               value={run.finished_at ? formatDateTime(run.finished_at) : "Pending"}
+            />
+            <RunMetric
+              icon={Hash}
+              label="Prompt tokens"
+              value={run.prompt_tokens !== null ? run.prompt_tokens.toLocaleString("en-US") : "—"}
+            />
+            <RunMetric
+              icon={Hash}
+              label="Completion tokens"
+              value={
+                run.completion_tokens !== null
+                  ? run.completion_tokens.toLocaleString("en-US")
+                  : "—"
+              }
+            />
+            <RunMetric
+              icon={Coins}
+              label="Est. cost"
+              value={run.cost_usd !== null ? formatUsdCost(Number(run.cost_usd)) : "Not priced"}
             />
             {run.error_message ? (
               <div className="rounded-lg border border-[#6e2029] bg-[var(--red-soft)] p-4 text-sm leading-6 text-[#ffc4c7] sm:col-span-2 xl:col-span-3">

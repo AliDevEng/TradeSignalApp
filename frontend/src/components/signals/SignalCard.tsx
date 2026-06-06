@@ -9,6 +9,7 @@ import {
   TradeStyleBadge
 } from "@/components/signals/SignalBadge";
 import { PositionSizeWidget } from "@/components/risk/PositionSizeWidget";
+import { ConfidenceCalibrationHint } from "@/components/signals/ConfidenceCalibrationHint";
 import { Card } from "@/components/ui/Card";
 import {
   formatPercent,
@@ -109,6 +110,8 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
               </p>
             </div>
           </div>
+
+          <ConfidenceCalibrationHint confidence={signal.confidence} />
 
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <div className="rounded-md border border-[#4a3d20] bg-[#151207] px-3 py-3">
