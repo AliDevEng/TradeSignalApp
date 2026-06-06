@@ -21,7 +21,7 @@ from app.services.indicators import (
     IndicatorSnapshot,
     InsufficientDataError,
 )
-from app.services.indicators.calculator import _clean
+from app.services.indicators.calculator import _clean, classify_regime
 from app.services.market_data import Candle
 
 
@@ -119,6 +119,52 @@ def test_compute_is_deterministic():
     a = IndicatorCalculator().compute(candles)
     b = IndicatorCalculator().compute(candles)
     assert a.model_dump() == b.model_dump()
+
+
+# ── trajectory + regime + divergence (Iteration 10 evidence enrichment) ───────
+
+
+def test_trajectory_fields_populate_with_enough_history():
+    snap = IndicatorCalculator().compute(_make_candles(80))
+    # The "previous" reads are present so a consumer can see momentum *turning*.
+    assert snap.rsi_14_prev is not None
+    assert snap.macd_histogram_prev is not None
+
+
+def test_regime_label_is_derived_from_adx():
+    snap = IndicatorCalculator().compute(_make_candles(80))
+    assert snap.adx_14 is not None
+    assert snap.regime in {"trending", "ranging", "transitional"}
+
+
+def test_classify_regime_thresholds():
+    assert classify_regime(30.0) == "trending"
+    assert classify_regime(25.0) == "trending"
+    assert classify_regime(22.0) == "transitional"
+    assert classify_regime(10.0) == "ranging"
+    assert classify_regime(None) is None
+
+
+def test_divergence_field_is_valid_or_none():
+    snap = IndicatorCalculator().compute(_make_candles(80))
+    assert snap.rsi_divergence in {"bullish", "bearish", None}
+
+
+def test_diverges_detects_bullish_disagreement():
+    # Two swing lows: price lower (10 → 8) while RSI higher (25 → 30) ⇒ bullish.
+    prices = [None, None, 10.0, None, 8.0]
+    rsis = [None, None, 25.0, None, 30.0]
+    assert IndicatorCalculator._diverges([2, 4], prices, rsis, price_lower=True) is True
+
+
+def test_diverges_false_when_rsi_agrees_with_price():
+    prices = [10.0, 8.0]
+    rsis = [25.0, 20.0]  # RSI also lower → no divergence
+    assert IndicatorCalculator._diverges([0, 1], prices, rsis, price_lower=True) is False
+
+
+def test_diverges_needs_two_pivots():
+    assert IndicatorCalculator._diverges([3], [1.0], [50.0], price_lower=True) is False
 
 
 # ── to_storage_dict() ────────────────────────────────────────────────────────

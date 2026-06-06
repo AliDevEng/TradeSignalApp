@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from app.controllers.analysis_run_controller import AnalysisRunController
-from app.models import AnalysisRunStatus
+from app.controllers.calendar_controller import CalendarController
 from app.controllers.exceptions import ResourceNotFoundError
 from app.controllers.pair_controller import PairController
 from app.controllers.performance_controller import PerformanceController
@@ -26,10 +26,13 @@ from app.controllers.signal_controller import SignalController
 from app.dependencies import (
     get_analysis_controller,
     get_analysis_run_controller,
+    get_calendar_controller,
     get_pair_controller,
     get_performance_controller,
     get_signal_controller,
 )
+from app.models import AnalysisRunStatus
+from app.schemas.calendar import CalendarResponse, EconomicEventResponse
 from app.schemas.performance import (
     CalibrationBucket,
     PerformanceResponse,
@@ -121,6 +124,13 @@ def analysis_ctrl(app) -> AsyncMock:
 def performance_ctrl(app) -> AsyncMock:
     mock = AsyncMock(spec=PerformanceController)
     app.dependency_overrides[get_performance_controller] = lambda: mock
+    return mock
+
+
+@pytest.fixture
+def calendar_ctrl(app) -> AsyncMock:
+    mock = AsyncMock(spec=CalendarController)
+    app.dependency_overrides[get_calendar_controller] = lambda: mock
     return mock
 
 
@@ -369,9 +379,7 @@ def scheduler_stub(app):
     return mock
 
 
-async def test_pipeline_status_running_when_latest_run_in_flight(
-    client, runs_ctrl, scheduler_stub
-):
+async def test_pipeline_status_running_when_latest_run_in_flight(client, runs_ctrl, scheduler_stub):
     running = AnalysisRunController._to_response(make_run(status=AnalysisRunStatus.RUNNING))
     runs_ctrl.get_latest.return_value = running
 
@@ -462,4 +470,46 @@ async def test_get_performance_unknown_pair_maps_to_404(client, performance_ctrl
 
 async def test_get_performance_rejects_invalid_date(client, performance_ctrl):
     resp = await client.get("/api/v1/performance?from=not-a-date")
+    assert resp.status_code == 422
+
+
+# ── GET /calendar ────────────────────────────────────────────────────────────
+
+
+async def test_get_calendar_wraps_report_in_envelope(client, calendar_ctrl):
+    calendar_ctrl.get_upcoming.return_value = CalendarResponse(
+        enabled=True,
+        within_hours=24,
+        events=[
+            EconomicEventResponse(
+                title="CPI",
+                currency="USD",
+                impact="high",
+                scheduled_at=datetime(2026, 6, 6, 12, 30, tzinfo=UTC),
+            )
+        ],
+    )
+
+    resp = await client.get("/api/v1/calendar")
+    body = resp.json()
+
+    assert resp.status_code == 200
+    assert body["success"] is True
+    assert body["data"]["enabled"] is True
+    assert len(body["data"]["events"]) == 1
+    assert body["data"]["events"][0]["title"] == "CPI"
+
+
+async def test_get_calendar_forwards_within_hours(client, calendar_ctrl):
+    calendar_ctrl.get_upcoming.return_value = CalendarResponse(
+        enabled=False, within_hours=48, events=[]
+    )
+
+    await client.get("/api/v1/calendar?within_hours=48")
+
+    assert calendar_ctrl.get_upcoming.await_args.kwargs == {"within_hours": 48}
+
+
+async def test_get_calendar_rejects_window_over_cap(client, calendar_ctrl):
+    resp = await client.get("/api/v1/calendar?within_hours=999")
     assert resp.status_code == 422

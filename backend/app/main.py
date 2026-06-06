@@ -20,6 +20,10 @@ from app.database import Database
 from app.error_handlers import register_exception_handlers
 from app.logging_config import configure_logging
 from app.services.ai import AIProvider, build_ai_provider
+from app.services.calendar import (
+    EconomicCalendarProvider,
+    build_economic_calendar_provider,
+)
 from app.services.market_data import (
     CachingMarketDataProvider,
     MarketDataProvider,
@@ -66,12 +70,16 @@ async def lifespan(app: FastAPI):
         build_market_data_provider(settings)
     )
     ai_provider: AIProvider = build_ai_provider(settings)
+    # News awareness: a config-driven calendar (off by default → the null
+    # provider, so the pipeline is unchanged unless explicitly enabled).
+    economic_calendar: EconomicCalendarProvider = build_economic_calendar_provider(settings)
     scheduler = Scheduler(
         timezone=settings.scheduler_timezone,
         misfire_grace_seconds=settings.scheduler_misfire_grace_seconds,
     )
     app.state.market_data_provider = market_data
     app.state.ai_provider = ai_provider
+    app.state.economic_calendar = economic_calendar
     app.state.scheduler = scheduler
 
     # The analysis controller is the pipeline. It manages its own database
@@ -83,6 +91,7 @@ async def lifespan(app: FastAPI):
         market_data=market_data,
         ai_provider=ai_provider,
         settings=settings,
+        economic_calendar=economic_calendar,
     )
     app.state.analysis_controller = analysis_controller
 
@@ -127,6 +136,7 @@ async def lifespan(app: FastAPI):
         # Reverse order of acquisition; each step guarded so one failure does
         # not abort the rest of the teardown.
         scheduler.shutdown(wait=False)
+        await economic_calendar.aclose()
         await ai_provider.aclose()
         await market_data.aclose()
         logger.info("Disposing database engine")

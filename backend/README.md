@@ -192,16 +192,24 @@ Goal: close the learning loop and harden the model boundary.
   and `analyze` returns an `AnalysisResult` (dual draft + usage), so the controller
   persists usage and computes cost without the view or model importing any SDK type.
 
-### Iteration 10 - Macro / Economic-Calendar Awareness (16 points)
+### Iteration 10 - Macro / Economic-Calendar Awareness (16 points) ✅ DONE
 Goal: make Gold signals aware of the news that actually moves Gold (USD, Fed, CPI).
-- [ ] (3) `EconomicCalendarProvider` ABC + one concrete provider behind a factory,
-  mirroring the `MarketDataProvider` pattern (`services/calendar/`).
-- [ ] (4) Fetch upcoming high-impact USD events (CPI, FOMC, NFP) for a window and
-  cache them (respect rate limits; one fetch per cycle, reused across the run).
-- [ ] (5) Inject an "upcoming high-impact events" block into `AnalysisContext` and
-  the prompt so the model can widen stops / lower confidence near a release.
-- [ ] (4) `GET /api/v1/calendar` endpoint for the frontend banner; guarded by an
-  `ECONOMIC_CALENDAR_ENABLED` config flag (off → behaves exactly as today).
+- [x] (3) `EconomicCalendarProvider` ABC + concrete providers behind a factory,
+  mirroring the `MarketDataProvider` pattern (`services/calendar/`): a
+  `NullEconomicCalendarProvider` (the disabled default) and a config-seeded
+  `StaticEconomicCalendarProvider`, with a live HTTP feed as a future drop-in.
+- [x] (4) Fetch upcoming high-impact events for a window — **one calendar call per
+  run**, reused across every pair (filtered to the events that affect each
+  instrument); a calendar outage degrades to "no events known" and never fails a
+  pair or the run.
+- [x] (5) Inject an "upcoming high-impact events" block into `AnalysisContext` and
+  the prompt so the model can widen stops / lower confidence near a release, and
+  feed news proximity into the **deterministic quality gate** (a high-impact event
+  inside the blackout window vetoes new trades for the affected instrument).
+- [x] (4) `GET /api/v1/calendar` endpoint for the frontend banner (`?within_hours=`,
+  1..168, default 24); guarded by an `ECONOMIC_CALENDAR_ENABLED` config flag (off →
+  the null provider, so the endpoint returns `enabled: false` with no events and the
+  pipeline behaves exactly as today).
 
 ### Iteration 11 - Real-time Streaming + Notifications (20 points)
 Goal: push updates instead of being polled, and deliver signals off-platform.
@@ -632,6 +640,7 @@ swappable and the logic framework-free).
 | `GET /api/v1/analysis/runs/{run_id}/signals` | `SignalController.list_for_run` | `APIResponse[list[SignalResponse]]` |
 | `POST /api/v1/analysis/runs` | `AnalysisController.run_manual` | `202` + `APIResponse[AnalysisRunAccepted]` |
 | `GET /api/v1/performance` | `PerformanceController.get_performance` | `APIResponse[PerformanceResponse]` — `?pair=`/`?signal_type=`/`?from=`/`?to=` filters |
+| `GET /api/v1/calendar` | `CalendarController.get_upcoming` | `APIResponse[CalendarResponse]` — upcoming high-impact events; `?within_hours=` (1..168, default 24) |
 
 Two read controllers were added so the pairs and analysis routers stay
 layering-compliant: `PairController` (pairs are small and enumerable, so its
@@ -861,6 +870,45 @@ cost via a small per-model pricing table (`services/ai/pricing.py`, fail-soft to
 `AnalysisRunResponse`. The controller only ever touches `TokenUsage` and a
 `Decimal`, so no provider type reaches persistence or the view.
 
+### Macro awareness + signal-quality gating (Iteration 10 deliverable)
+
+This iteration makes a signal aware of the news that moves it and — just as
+important — separates a directional **bias** from an **actionable trade**. Four
+pure, independently-tested pieces, all additive (the news feature is off by
+default, so an unconfigured deployment behaves exactly as before):
+
+**Richer evidence.** The indicator calculator now reports *trajectory* and
+*regime*, not just frozen levels: `rsi_14_prev` / `macd_histogram_prev` (so the
+model sees momentum *turning*), `adx_14` + a `regime` label
+(`trending`/`ranging`/`transitional`), and an `rsi_divergence` flag
+(`bullish`/`bearish`). A new pure `StructureAnalyzer` (`services/structure/`)
+computes the actual levels a trader anchors to — swing highs/lows, nearest
+support/resistance to the last close, and the range — and the prompt hands them
+to the model so "anchor to structure" stops contradicting "don't invent levels".
+
+**Quality gate (bias vs. actionable).** A pure `SignalGate`
+(`services/signal_quality/`) turns each bias into a verdict: it computes the
+reward:risk to TP1, raises **hard vetoes** for the textbook traps (reward:risk
+below the configurable floor, fighting a *trending* higher-timeframe market, a
+high-impact event inside the news blackout), and blends a `quality_score` ∈ [0,1].
+The verdict lands on three new `signals` columns (migration `0006`):
+`should_trade` (the actionable flag, indexed), `quality_score`, and an explainable
+`quality_snapshot` (reward:risk, the gate's reasons, and the model's own
+self-reported `risks`). All surfaced on `SignalResponse`.
+
+**Trap-check.** `SignalDraft` gains a `risks` array and the prompt requires the
+model to name how each trade could fail. The *enforcement* is the deterministic
+gate, not the self-report — a single LLM call (no second round-trip), so it adds
+no cost or failure mode while the veto can't be talked out of by an overconfident
+model.
+
+**News awareness.** An `EconomicCalendarProvider` family (`services/calendar/`)
+mirrors the market-data pattern: ABC + null + static + factory, behind
+`ECONOMIC_CALENDAR_ENABLED`. The analysis controller fetches upcoming events
+**once per run**, filters them to each instrument, renders them into the prompt,
+and feeds news proximity into the gate. `GET /api/v1/calendar` exposes them for the
+frontend banner (`enabled` distinguishes "feature off" from "nothing scheduled").
+
 ## 🧪 Run
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -894,17 +942,18 @@ ruff format --check .
 pyright
 ```
 
-### ✅ Verification status (Iterations 1–9)
-Last verified on 2026-06-04:
-- `pytest` — **389 passed** (365 through Iteration 8, then Iteration 9's AI
-  pricing, structured-output / usage provider tests, the feedback-loop and
-  cost-summing controller tests, the `list_recent_closed` repository SQL test, and
-  the `0005` usage-migration tests)
+### ✅ Verification status (Iterations 1–10)
+Last verified on 2026-06-06:
+- `pytest` — **453 passed** (389 through Iteration 9, then Iteration 10's
+  structure analyzer, enriched-indicator (trajectory/regime/divergence), signal
+  quality-gate, economic-calendar provider + factory, calendar controller and
+  `GET /api/v1/calendar` route tests, plus the controller gating/news-veto tests)
 - `ruff check .` — clean
-- `ruff format --check .` — clean (100 files)
-- `alembic upgrade head --sql` renders cleanly through `0005_analysis_run_usage`
-  (single head); the new non-negative CHECK constraints carry the convention's
-  `ck_analysis_runs_…` names
+- `ruff format --check .` — clean (109 files)
+- `alembic upgrade head --sql` renders cleanly through `0006_signal_quality`
+  (single linear head); the new quality-gate columns carry their convention names
+  (`ck_signals_quality_score_in_unit_interval`, `ix_signals_should_trade`) and
+  `should_trade` ships `NOT NULL DEFAULT true` so existing rows backfill atomically
 - `pyright` — clean except one documented Anthropic-SDK stub friction (a plain
   `dict` tool definition vs the SDK's strict `ToolParam` union); the enforced gate
   remains `pytest` + `ruff`

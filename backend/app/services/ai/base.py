@@ -33,8 +33,10 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.services import ServiceError
+from app.services.calendar import EconomicEvent
 from app.services.indicators.calculator import IndicatorSnapshot
 from app.services.market_data.base import Candle
+from app.services.structure import StructureSnapshot
 from app.timeframes import timeframe_minutes
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,8 @@ SignalDirection = Literal["buy", "sell", "neutral"]
 
 # Cap on take-profit levels the model may return (TP1/TP2/TP3 in the product).
 MAX_TAKE_PROFITS: Final[int] = 3
+# Cap on the self-reported risk/trap notes a signal may carry.
+MAX_RISKS: Final[int] = 5
 # Most recent candles included in the prompt. Enough for the model to see
 # near-term price action without blowing the token budget on ancient bars the
 # indicators already summarise.
@@ -119,6 +123,10 @@ class TimeframeView:
     timeframe: str
     indicators: IndicatorSnapshot
     recent_candles: list[Candle]
+    # Computed price structure for this timeframe (swing pivots, nearest
+    # support/resistance, range). ``None`` leaves the structure block out, so the
+    # prompt is unchanged for callers that don't supply it.
+    structure: StructureSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +195,10 @@ class AnalysisContext:
     # loop). ``None`` leaves the performance block out of the prompt entirely.
     scalp_performance: PriorPerformance | None = None
     swing_performance: PriorPerformance | None = None
+    # Upcoming high-impact macro events relevant to this instrument (Iteration 10
+    # news awareness). Empty leaves the news block out, so the prompt is
+    # unchanged when the calendar is disabled.
+    events: tuple[EconomicEvent, ...] = ()
 
 
 class SignalDraft(BaseModel):
@@ -204,6 +216,12 @@ class SignalDraft(BaseModel):
     stop_loss: Decimal | None = None
     take_profits: list[Decimal] = Field(default_factory=list, max_length=MAX_TAKE_PROFITS)
     rationale: str | None = None
+    # The model's own trap-check: the concrete ways this idea could fail (stop
+    # hunt, news, over-extension, fighting the higher-TF trend). Surfaced for the
+    # user and folded into the rationale; the *actionable* decision is the
+    # deterministic gate's, not these self-reported risks. Capped so a verbose
+    # model can't bloat the row.
+    risks: list[str] = Field(default_factory=list, max_length=MAX_RISKS)
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -265,8 +283,10 @@ class SignalDraft(BaseModel):
         for lower, higher in pairwise(present):
             in_order = lower < higher if ascending else lower > higher
             if not in_order:
-                arrow = "stop < entry < TP1 < TP2 < TP3" if ascending else (
-                    "stop > entry > TP1 > TP2 > TP3"
+                arrow = (
+                    "stop < entry < TP1 < TP2 < TP3"
+                    if ascending
+                    else ("stop > entry > TP1 > TP2 > TP3")
                 )
                 raise ValueError(
                     f"{self.direction} levels must satisfy {arrow}; "
@@ -368,6 +388,9 @@ class BaseAIProvider(AIProvider):
                 '"stop_loss" (number)',
                 f'"take_profits" (array of 1..{MAX_TAKE_PROFITS} numbers, ordered TP1..TP3)',
                 '"rationale" (short string)',
+                f'"risks" (array of up to {MAX_RISKS} short strings — the concrete '
+                "ways THIS trade could fail: stop hunt, news, over-extension, "
+                "counter-trend)",
             ]
         )
         contract = (
@@ -380,7 +403,13 @@ class BaseAIProvider(AIProvider):
             '"sell") — never "neutral", never null prices. Express any lack of '
             "conviction through a LOW confidence value, not by refusing to trade. "
             "Levels must be internally consistent with the direction (for a buy: "
-            "stop_loss < entry < TP1 < TP2 < TP3; for a sell: the reverse). The "
+            "stop_loss < entry < TP1 < TP2 < TP3; for a sell: the reverse). Anchor "
+            "every level to the PROVIDED structure (swing highs/lows, "
+            "support/resistance) and never invent a level the data does not show. "
+            'Before committing, run a trap-check and record it in "risks"; if the '
+            "setup is poor (weak reward:risk, counter-trend, news imminent) keep the "
+            "directional bias but lower its confidence — a separate gate decides "
+            "whether it is actually tradeable. The "
             '"scalp" is a short-term idea framed on the lower timeframes (tighter '
             'stop, nearer targets); the "swing" is a higher-timeframe idea (wider '
             "stop, extended targets). They may differ in direction."
@@ -407,26 +436,62 @@ class BaseAIProvider(AIProvider):
                 if (view.timeframe == context.primary_timeframe)
                 else ""
             )
+            structure = self._render_structure(view.structure)
             blocks.append(
                 f"=== Timeframe: {view.timeframe}{role}{primary} ===\n"
-                f"Indicators (latest):\n{json.dumps(ind, indent=2, default=str)}\n\n"
+                f"Indicators (latest):\n{json.dumps(ind, indent=2, default=str)}\n"
+                f"{structure}\n"
                 f"Recent candles (oldest first, up to {_PROMPT_CANDLE_WINDOW}):\n{candles}"
             )
         order = ", ".join(v.timeframe for v in views)
         framing = self._render_framing(context)
         prior = self._render_prior_signals(context)
         performance = self._render_performance(context)
+        news = self._render_news(context)
         return (
             f"Instrument: {context.symbol}\n"
             f"Primary (decision) timeframe: {context.primary_timeframe}\n"
             f"Timeframes provided (high → low): {order}\n"
             + framing
+            + news
             + "\n\n"
             + "\n\n".join(blocks)
             + f"\n\n{prior}"
             + performance
             + "\n\nPerform a top-down multi-timeframe analysis and return the JSON "
             "object with both a scalp and a swing signal now."
+        )
+
+    @staticmethod
+    def _render_structure(structure: StructureSnapshot | None) -> str:
+        """Render the computed price structure for a timeframe block.
+
+        Omitted (empty string) when no structure was supplied or none could be
+        derived, so unlabelled callers and short series are unchanged. When
+        present it gives the model real levels to anchor stops/targets to.
+        """
+        if structure is None or structure.is_empty:
+            return ""
+        levels = structure.to_dict()
+        return "Structure (computed — anchor levels to these):\n" + json.dumps(
+            levels, indent=2, default=str
+        )
+
+    @staticmethod
+    def _render_news(context: AnalysisContext) -> str:
+        """Render upcoming high-impact events so the model can de-risk near them.
+
+        Omitted entirely when there are no events (calendar disabled or nothing
+        scheduled), keeping the prompt identical to before the feature.
+        """
+        if not context.events:
+            return ""
+        lines = "\n".join(
+            f"- {event.label()} at {event.scheduled_at.isoformat()}" for event in context.events
+        )
+        return (
+            "\n\n⚠️ Upcoming high-impact events (widen stops / lower confidence; a "
+            "release can spike price through a tight stop):\n" + lines
         )
 
     @staticmethod

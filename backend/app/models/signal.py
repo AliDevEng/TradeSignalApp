@@ -125,6 +125,10 @@ class Signal(Base, TimestampMixin):
             "take_profit_3 IS NULL OR take_profit_3 > 0",
             name="take_profit_3_positive_when_set",
         ),
+        CheckConstraint(
+            "quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)",
+            name="quality_score_in_unit_interval",
+        ),
         # A single run produces at most one signal per pair *per style*
         # (one scalp + one swing). NULLs in `analysis_run_id` (manual
         # signals, or runs that have since been deleted) are treated as
@@ -219,6 +223,21 @@ class Signal(Base, TimestampMixin):
     timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     indicators_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    # ── Quality gate (bias vs. actionable trade) ──────────────────────────────
+    # Every run emits a directional bias per style, but only some are worth
+    # acting on. ``should_trade`` is the deterministic gate's verdict (a bias
+    # with ``False`` is "watch, don't trade"); ``quality_score`` ∈ [0,1] is its
+    # blended quality; ``quality_snapshot`` keeps the explainable breakdown
+    # (reward:risk, the reasons, the model's self-reported risks). Defaulted so
+    # pre-gate rows backfill as actionable rather than NULL.
+    should_trade: Mapped[bool] = mapped_column(
+        nullable=False, default=True, server_default="true", index=True
+    )
+    quality_score: Mapped[float | None] = mapped_column(
+        Numeric(5, 4, asdecimal=False), nullable=True
+    )
+    quality_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True

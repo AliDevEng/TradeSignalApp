@@ -207,11 +207,15 @@ class OutcomeEvaluator:
         """
         if risk is None:
             return None, None
-        fav = None if prior_mfe is None else (
-            entry + prior_mfe * risk if is_buy else entry - prior_mfe * risk
+        fav = (
+            None
+            if prior_mfe is None
+            else (entry + prior_mfe * risk if is_buy else entry - prior_mfe * risk)
         )
-        adv = None if prior_mae is None else (
-            entry + prior_mae * risk if is_buy else entry - prior_mae * risk
+        adv = (
+            None
+            if prior_mae is None
+            else (entry + prior_mae * risk if is_buy else entry - prior_mae * risk)
         )
         return fav, adv
 

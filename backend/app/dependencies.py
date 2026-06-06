@@ -19,6 +19,7 @@ from app.config import SettingsDep
 from app.controllers import (
     AnalysisController,
     AnalysisRunController,
+    CalendarController,
     PairController,
     PerformanceController,
     SignalController,
@@ -30,6 +31,7 @@ from app.database.repository import (
     SignalRepository,
 )
 from app.services.ai import AIProvider
+from app.services.calendar import EconomicCalendarProvider
 from app.services.market_data import MarketDataProvider
 from app.tasks import Scheduler
 
@@ -213,3 +215,27 @@ def get_analysis_controller(request: Request) -> AnalysisController:
 
 
 AnalysisControllerDep = Annotated[AnalysisController, Depends(get_analysis_controller)]
+
+
+def get_economic_calendar(request: Request) -> EconomicCalendarProvider:
+    return _require_state(request, "economic_calendar", "Economic calendar provider")  # type: ignore[return-value]
+
+
+EconomicCalendarDep = Annotated[EconomicCalendarProvider, Depends(get_economic_calendar)]
+
+
+def get_calendar_controller(
+    calendar: EconomicCalendarDep,
+    settings: SettingsDep,
+) -> CalendarController:
+    """Compose the read-side calendar controller from the app-state provider.
+
+    Request-scoped, but its collaborator (the provider) lives for the serving
+    lifetime — so it is resolved off app state, not constructed per request. The
+    ``enabled`` flag rides along so the response can tell the frontend whether the
+    feature is on (an empty list then means "nothing scheduled", not "disabled").
+    """
+    return CalendarController(calendar=calendar, enabled=settings.economic_calendar_enabled)
+
+
+CalendarControllerDep = Annotated[CalendarController, Depends(get_calendar_controller)]

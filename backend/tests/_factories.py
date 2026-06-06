@@ -73,6 +73,9 @@ def make_signal(
     outcome: SignalOutcome = SignalOutcome.OPEN,
     realized_r: Decimal | None = None,
     closed_at: datetime | None = None,
+    should_trade: bool = True,
+    quality_score: float | None = 0.7,
+    quality_snapshot: dict | None = None,
 ) -> Signal:
     pair = pair if pair is not None else make_pair()
     signal = Signal(
@@ -98,6 +101,9 @@ def make_signal(
         outcome=outcome,
         realized_r=realized_r,
         closed_at=closed_at,
+        should_trade=should_trade,
+        quality_score=quality_score,
+        quality_snapshot=quality_snapshot,
     )
     signal.id = id or uuid.uuid4()
     # Set the relationship directly so the mapping reads it without a lazy load.

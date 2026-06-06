@@ -176,9 +176,7 @@ class SignalRepository(BaseRepository[Signal]):
         if status is not None and now is not None:
             unexpired = or_(Signal.expires_at.is_(None), Signal.expires_at >= now)
             if status == "expired":
-                conditions.append(
-                    and_(Signal.expires_at.is_not(None), Signal.expires_at < now)
-                )
+                conditions.append(and_(Signal.expires_at.is_not(None), Signal.expires_at < now))
             elif status == "watchlist":
                 conditions.append(and_(Signal.direction == SignalDirection.NEUTRAL, unexpired))
             elif status == "active":
@@ -259,16 +257,20 @@ class SignalRepository(BaseRepository[Signal]):
         Shares :meth:`_filter_conditions` with the list query so the two can't
         drift and the ``PaginatedResponse`` total always matches the rows.
         """
-        stmt = select(func.count()).select_from(Signal).where(
-            *self._filter_conditions(
-                pair_id=pair_id,
-                analysis_run_id=analysis_run_id,
-                signal_type=signal_type,
-                outcome=outcome,
-                direction=direction,
-                result=result,
-                status=status,
-                now=now,
+        stmt = (
+            select(func.count())
+            .select_from(Signal)
+            .where(
+                *self._filter_conditions(
+                    pair_id=pair_id,
+                    analysis_run_id=analysis_run_id,
+                    signal_type=signal_type,
+                    outcome=outcome,
+                    direction=direction,
+                    result=result,
+                    status=status,
+                    now=now,
+                )
             )
         )
         count_result = await self._session.execute(stmt)

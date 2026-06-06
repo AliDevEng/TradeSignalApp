@@ -110,6 +110,26 @@ class Settings(BaseSettings):
     # in line with the data plan's per-minute budget.
     outcome_interval_minutes: int = Field(default=5, ge=1, le=1440)
 
+    # ── Signal quality gate ──────────────────────────────────────────────────
+    # The product always emits a directional bias per style, but a bias is only
+    # marked *actionable* (``should_trade``) when the deterministic gate agrees.
+    # ``min_reward_risk`` is the reward:risk-to-TP1 floor below which a setup is
+    # vetoed outright (the most common reason a tidy-looking trade loses over
+    # time); ``quality_trade_threshold`` is the blended-quality score a surviving
+    # bias must clear to be actionable. Both are deliberately conservative.
+    min_reward_risk: float = Field(default=1.5, ge=0.0, le=10.0)
+    quality_trade_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # ── Economic calendar (news awareness) ───────────────────────────────────
+    # Off by default: when disabled the pipeline behaves exactly as if no events
+    # existed. When enabled, high-impact events inside ``news_blackout_minutes``
+    # of now cause the gate to veto new trades for the affected instrument (and
+    # the prompt to widen caution). ``economic_calendar_events_json`` seeds the
+    # static provider — a JSON array of {title,currency,impact,scheduled_at}.
+    economic_calendar_enabled: bool = False
+    economic_calendar_events_json: str = ""
+    news_blackout_minutes: int = Field(default=60, ge=0, le=1440)
+
     # ── Signal lifetime ────────────────────────────────────────────────────
     # How long each style's signal stays "fresh" before ``expires_at`` lapses.
     # A scalp ages out in hours; a swing lives for days. These drive the frontend

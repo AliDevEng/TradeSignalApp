@@ -82,6 +82,16 @@ class SignalResponse(BaseModel):
     # surfaced verbatim so the frontend can explain *why* a signal exists.
     indicators_snapshot: dict[str, Any] | None = None
 
+    # ── Quality gate (bias vs. actionable) ────────────────────────────────────
+    # ``should_trade`` is the deterministic gate's verdict: a directional bias is
+    # always present, but only an actionable one should prompt a trade.
+    # ``quality_score`` ∈ [0,1] is its blended quality; ``quality_snapshot``
+    # carries the explainable breakdown (reward:risk, reasons, self-reported
+    # risks) so the UI can show *why* a bias was or wasn't marked tradeable.
+    should_trade: bool = True
+    quality_score: float | None = None
+    quality_snapshot: dict[str, Any] | None = None
+
     generated_at: datetime
     expires_at: datetime | None = None
 

@@ -85,8 +85,15 @@ from app.services.ai import (
     TokenUsage,
     estimate_cost_usd,
 )
+from app.services.calendar import (
+    EconomicCalendarProvider,
+    EconomicEvent,
+    NullEconomicCalendarProvider,
+)
 from app.services.indicators import IndicatorCalculator
 from app.services.market_data import MarketDataProvider
+from app.services.signal_quality import GateConfig, GateEvidence, GateVerdict, SignalGate
+from app.services.structure import StructureAnalyzer
 from app.timeframes import timeframe_minutes
 
 logger = logging.getLogger(__name__)
@@ -201,6 +208,10 @@ class _PairOutcome:
     # Token usage for this pair's AI call (Iteration 9); ``None`` when the
     # provider didn't report it or the pair failed before/at the AI call.
     usage: TokenUsage | None = None
+    # The quality gate's verdict per style (Iteration 10): whether each bias is
+    # actionable, its quality score, and the explainable breakdown. ``None`` on a
+    # failed outcome (no drafts to score).
+    verdicts: dict[SignalType, GateVerdict] | None = None
 
     @property
     def failed(self) -> bool:
@@ -233,14 +244,32 @@ class AnalysisController:
         ai_provider: AIProvider,
         settings: Settings,
         calculator: IndicatorCalculator | None = None,
+        structure_analyzer: StructureAnalyzer | None = None,
+        gate: SignalGate | None = None,
+        economic_calendar: EconomicCalendarProvider | None = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._database = database
         self._market_data = market_data
         self._ai = ai_provider
-        # The calculator is pure and configuration-free; default-construct it but
-        # allow injection so tests can substitute a deterministic stub.
+        # The calculator and structure analyzer are pure and configuration-free;
+        # default-construct them but allow injection so tests can substitute
+        # deterministic stubs.
         self._calculator = calculator or IndicatorCalculator()
+        self._structure = structure_analyzer or StructureAnalyzer()
+        # The quality gate turns each bias into an actionable/"bias-only" verdict.
+        # Built from config (reward:risk floor + actionable threshold) so the
+        # policy is operator-tunable without code changes.
+        self._gate = gate or SignalGate(
+            GateConfig(
+                min_reward_risk=settings.min_reward_risk,
+                quality_threshold=settings.quality_trade_threshold,
+            )
+        )
+        # News awareness: a disabled calendar is the null provider (no events),
+        # so the pipeline is unchanged when the feature is off.
+        self._calendar = economic_calendar or NullEconomicCalendarProvider()
+        self._news_blackout = timedelta(minutes=settings.news_blackout_minutes)
         self._clock = clock
 
         # Snapshot the analysis parameters once. They are recorded on the run
@@ -320,8 +349,12 @@ class AnalysisController:
             ",".join(self._timeframes),
         )
 
+        # Fetch upcoming high-impact events once per run (cheap, reused across
+        # every pair), so a calendar outage can't fail individual pairs.
+        events = await self._fetch_events(started_at)
+
         # The slow part: network IO across providers, owning no DB connection.
-        outcomes = await self._analyze_pairs(targets)
+        outcomes = await self._analyze_pairs(targets, events)
 
         try:
             run = await self._finalize_run(run_id, outcomes)
@@ -416,7 +449,25 @@ class AnalysisController:
 
     # ── Phase 2: analyse the pairs (no database, all network) ────────────────
 
-    async def _analyze_pairs(self, targets: Sequence[_PairTarget]) -> list[_PairOutcome]:
+    async def _fetch_events(self, now: datetime) -> tuple[EconomicEvent, ...]:
+        """Upcoming high-impact events for the blackout window, fail-soft.
+
+        One calendar call per run, reused across pairs. A calendar failure must
+        never sink the run — it degrades to "no events known" (every gate then
+        behaves as if the calendar were disabled) and is logged.
+        """
+        try:
+            events = await self._calendar.upcoming(within=self._news_blackout, now=now)
+            return tuple(events)
+        except ServiceError as exc:
+            logger.warning("Economic calendar unavailable; proceeding without news: %s", exc)
+        except Exception:  # a calendar bug must not abort the whole run
+            logger.exception("Unexpected economic calendar failure; proceeding without news")
+        return ()
+
+    async def _analyze_pairs(
+        self, targets: Sequence[_PairTarget], events: tuple[EconomicEvent, ...]
+    ) -> list[_PairOutcome]:
         """Analyse every pair, up to ``_max_concurrency`` at a time.
 
         A run's pairs are independent — each is a self-contained fetch → compute
@@ -433,11 +484,13 @@ class AnalysisController:
 
         async def _guarded(target: _PairTarget) -> _PairOutcome:
             async with semaphore:
-                return await self._analyze_pair(target)
+                return await self._analyze_pair(target, events)
 
         return list(await asyncio.gather(*(_guarded(target) for target in targets)))
 
-    async def _analyze_pair(self, target: _PairTarget) -> _PairOutcome:
+    async def _analyze_pair(
+        self, target: _PairTarget, events: tuple[EconomicEvent, ...]
+    ) -> _PairOutcome:
         """Fetch → compute → reason for a single pair, isolating its failures.
 
         Returns an outcome rather than raising: an expected service failure
@@ -447,13 +500,16 @@ class AnalysisController:
         pairs' good signals) but logged with a traceback so genuine bugs stay
         loud rather than masquerading as a routine partial failure.
         """
+        # Events relevant to this instrument (USD releases for XAUUSD/EURUSD, …).
+        # Pure filter; safe to compute before the IO-bearing try.
+        symbol_events = tuple(event for event in events if event.affects(target.symbol))
         try:
             views: list[TimeframeView] = []
             indicators: dict[str, object] = {}
-            # One market-data call + indicator pass per timeframe. Sequential by
-            # design: a single pair's handful of calls stays well inside the
-            # provider's per-minute budget, and any one failing fails just this
-            # pair (the run continues for the others).
+            # One market-data call + indicator/structure pass per timeframe.
+            # Sequential by design: a single pair's handful of calls stays well
+            # inside the provider's per-minute budget, and any one failing fails
+            # just this pair (the run continues for the others).
             for timeframe in self._timeframes:
                 candles = await self._market_data.fetch_candles(
                     target.symbol,
@@ -461,14 +517,21 @@ class AnalysisController:
                     count=self._candle_count,
                 )
                 snapshot = self._calculator.compute(candles)
+                structure = self._structure.analyze(candles)
                 views.append(
                     TimeframeView(
                         timeframe=timeframe,
                         indicators=snapshot,
                         recent_candles=list(candles),
+                        structure=structure,
                     )
                 )
-                indicators[timeframe] = snapshot.to_storage_dict()
+                # Persist indicators + (when derivable) structure verbatim, so a
+                # signal stays explainable against the exact inputs that produced it.
+                stored = snapshot.to_storage_dict()
+                if not structure.is_empty:
+                    stored = {**stored, "structure": structure.to_dict()}
+                indicators[timeframe] = stored
 
             context = AnalysisContext(
                 symbol=target.symbol,
@@ -480,6 +543,7 @@ class AnalysisController:
                 swing_timeframes=tuple(self._swing_timeframes),
                 scalp_performance=target.scalp_performance,
                 swing_performance=target.swing_performance,
+                events=symbol_events,
             )
             result = await self._ai.analyze(context)
         except ServiceError as exc:
@@ -489,9 +553,113 @@ class AnalysisController:
             logger.exception("Pair %s raised an unexpected error during analysis", target.symbol)
             return _PairOutcome(target=target, error=f"{type(exc).__name__}: {exc}")
 
+        # Pure post-processing: gate each bias into an actionable/"bias-only"
+        # verdict from the levels + evidence. Cannot fail, so it sits outside the
+        # IO try.
+        verdicts = self._evaluate_quality(result.dual, views=views, events=symbol_events)
         return _PairOutcome(
-            target=target, dual=result.dual, indicators=indicators, usage=result.usage
+            target=target,
+            dual=result.dual,
+            indicators=indicators,
+            usage=result.usage,
+            verdicts=verdicts,
         )
+
+    # ── Quality gating ────────────────────────────────────────────────────────
+
+    def _evaluate_quality(
+        self,
+        dual: DualSignalDraft,
+        *,
+        views: Sequence[TimeframeView],
+        events: tuple[EconomicEvent, ...],
+    ) -> dict[SignalType, GateVerdict]:
+        """Run the deterministic gate over each style's bias.
+
+        The higher-timeframe trend and the news blackout are shared across both
+        styles; the regime and divergence are read from each style's own decision
+        timeframe (the scalp's lowest frame, the swing's highest).
+        """
+        blackout, news_event = self._news_blackout_of(events)
+        trend = self._higher_tf_trend(views)
+        return {
+            SignalType.SCALP: self._gate.evaluate(
+                self._evidence_for(
+                    dual.scalp,
+                    decision_timeframe=self._scalp_timeframe,
+                    views=views,
+                    trend=trend,
+                    blackout=blackout,
+                    news_event=news_event,
+                )
+            ),
+            SignalType.SWING: self._gate.evaluate(
+                self._evidence_for(
+                    dual.swing,
+                    decision_timeframe=self._swing_timeframe,
+                    views=views,
+                    trend=trend,
+                    blackout=blackout,
+                    news_event=news_event,
+                )
+            ),
+        }
+
+    @staticmethod
+    def _evidence_for(
+        draft: SignalDraft,
+        *,
+        decision_timeframe: str,
+        views: Sequence[TimeframeView],
+        trend: str | None,
+        blackout: bool,
+        news_event: str | None,
+    ) -> GateEvidence:
+        decision = next((v for v in views if v.timeframe == decision_timeframe), None)
+        regime = decision.indicators.regime if decision is not None else None
+        divergence = decision.indicators.rsi_divergence if decision is not None else None
+        entry = draft.entry
+        assert entry is not None  # invariant: an emitted directional signal has an entry
+        return GateEvidence(
+            direction=draft.direction,
+            entry=entry,
+            stop_loss=draft.stop_loss,
+            take_profit_1=draft.take_profits[0] if draft.take_profits else None,
+            confidence=draft.confidence,
+            higher_tf_trend=trend,
+            regime=regime,
+            rsi_divergence=divergence,
+            news_blackout=blackout,
+            news_event=news_event,
+        )
+
+    @staticmethod
+    def _news_blackout_of(events: tuple[EconomicEvent, ...]) -> tuple[bool, str | None]:
+        """Whether a high-impact event sits in the window, and its label.
+
+        ``events`` are already filtered to the instrument and the blackout window,
+        so any high-impact one present means "blackout".
+        """
+        high_impact = [event for event in events if event.is_high_impact]
+        if high_impact:
+            return True, high_impact[0].label()
+        return False, None
+
+    @staticmethod
+    def _higher_tf_trend(views: Sequence[TimeframeView]) -> str | None:
+        """Coarse directional bias from the highest analysed timeframe.
+
+        Price above its EMA-200 (or EMA-50 fallback) is "up", below is "down",
+        ``None`` when the references aren't available (short history / stub).
+        """
+        if not views:
+            return None
+        highest = max(views, key=lambda v: timeframe_minutes(v.timeframe))
+        indicators = highest.indicators
+        reference = indicators.ema_200 if indicators.ema_200 is not None else indicators.ema_50
+        if indicators.last_close is None or reference is None:
+            return None
+        return "up" if indicators.last_close > reference else "down"
 
     # ── Phase 3: persist signals + finalise the ledger (one transaction) ─────
 
@@ -578,6 +746,7 @@ class AnalysisController:
         """
         dual = outcome.dual
         indicators = outcome.indicators
+        verdicts = outcome.verdicts or {}
         assert dual is not None  # invariant from emits_signals
         assert indicators is not None  # set on every successful outcome
 
@@ -591,6 +760,7 @@ class AnalysisController:
                 run_id=run_id,
                 generated_at=generated_at,
                 indicators=indicators,
+                verdict=verdicts.get(SignalType.SCALP),
             ),
             self._build_one_signal(
                 outcome.target.id,
@@ -601,6 +771,7 @@ class AnalysisController:
                 run_id=run_id,
                 generated_at=generated_at,
                 indicators=indicators,
+                verdict=verdicts.get(SignalType.SWING),
             ),
         ]
 
@@ -615,6 +786,7 @@ class AnalysisController:
         run_id: uuid.UUID,
         generated_at: datetime,
         indicators: dict[str, object],
+        verdict: GateVerdict | None,
     ) -> Signal:
         """Map one directional :class:`SignalDraft` onto a ``Signal`` ORM row.
 
@@ -623,6 +795,10 @@ class AnalysisController:
         ``take_profit`` (TP1), ``take_profit_2`` (TP2) and ``take_profit_3``
         (TP3); we map each level positionally and leave the columns NULL for any
         level the draft did not emit.
+
+        The gate ``verdict`` (when present) supplies ``should_trade`` /
+        ``quality_score`` and the explainable ``quality_snapshot``; absent, the
+        signal defaults to actionable so the path is robust to an un-gated caller.
         """
         assert draft.entry is not None  # invariant from emits_signals
 
@@ -645,11 +821,30 @@ class AnalysisController:
             timeframe=timeframe,
             rationale=draft.rationale,
             indicators_snapshot=indicators,
+            should_trade=verdict.should_trade if verdict is not None else True,
+            quality_score=verdict.quality_score if verdict is not None else None,
+            quality_snapshot=self._quality_snapshot(verdict, draft),
             generated_at=generated_at,
             expires_at=expires_at,
             ai_provider=self._ai.provider_name,
             ai_model=self._ai.model,
         )
+
+    @staticmethod
+    def _quality_snapshot(
+        verdict: GateVerdict | None, draft: SignalDraft
+    ) -> dict[str, object] | None:
+        """The explainable quality breakdown persisted on the signal.
+
+        Combines the gate's verdict (decision, score, reward:risk, reasons) with
+        the model's own self-reported ``risks``. ``None`` when the signal was not
+        gated, so the column stays NULL rather than carrying an empty husk.
+        """
+        if verdict is None:
+            return None
+        snapshot = verdict.to_dict()
+        snapshot["risks"] = list(draft.risks)
+        return snapshot
 
     @staticmethod
     def _resolve_status(*, total: int, processed: int) -> AnalysisRunStatus:

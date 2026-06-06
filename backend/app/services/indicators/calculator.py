@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from app.services import ServiceError
 from app.services.market_data.base import Candle
+from app.services.structure import find_pivots
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,34 @@ MIN_CANDLES: Final[int] = 35
 # Rounding keeps the JSONB payload compact and stable across float noise
 # without throwing away precision that matters at FX/metals scales.
 _ROUND_DP: Final[int] = 8
+
+# How many bars back the "previous" trajectory values look. The point of these
+# is *direction of change* (is RSI turning up? is the MACD histogram shrinking?),
+# which a single-bar delta is too noisy to show — three bars is a clean read.
+_TRAJECTORY_LOOKBACK: Final[int] = 3
+
+# ADX needs ~2x its length to settle. Below ~28 bars its value is unreliable, so
+# the regime label is left ``None`` rather than asserting a trend from noise.
+_ADX_MIN_ROWS: Final[int] = 28
+# ADX regime thresholds — the conventional reads: a strong directional move
+# above 25, a directionless/ranging market below 20, transitional in between.
+_ADX_TRENDING: Final[float] = 25.0
+_ADX_RANGING: Final[float] = 20.0
+
+
+def classify_regime(adx: float | None) -> str | None:
+    """Map an ADX value onto a coarse regime label the AI and gate both read.
+
+    ``None`` ADX (too little history) yields ``None`` — an honest "unknown"
+    rather than a fabricated regime.
+    """
+    if adx is None:
+        return None
+    if adx >= _ADX_TRENDING:
+        return "trending"
+    if adx < _ADX_RANGING:
+        return "ranging"
+    return "transitional"
 
 
 class IndicatorError(ServiceError):
@@ -92,12 +121,31 @@ class IndicatorSnapshot(BaseModel):
     ema_200: float | None = None
 
     rsi_14: float | None = None
+    # RSI ``_TRAJECTORY_LOOKBACK`` bars ago — lets a consumer see whether
+    # momentum is turning (RSI 33 rising off 28 is a very different signal from
+    # RSI 33 falling). ``None`` when there isn't enough history.
+    rsi_14_prev: float | None = None
+    # Whether price made a higher/lower extreme while RSI did the opposite over
+    # the recent swings: ``"bullish"`` (price lower low, RSI higher low),
+    # ``"bearish"`` (price higher high, RSI lower high), or ``None``. One of the
+    # strongest reversal tells, and invisible from a single snapshot value.
+    rsi_divergence: str | None = None
 
     macd: float | None = None
     macd_signal: float | None = None
     macd_histogram: float | None = None
+    # MACD histogram ``_TRAJECTORY_LOOKBACK`` bars ago — a shrinking histogram
+    # warns of fading momentum before the MACD line itself crosses.
+    macd_histogram_prev: float | None = None
 
     atr_14: float | None = None
+
+    # Trend-strength + the regime label derived from it. ``regime`` is one of
+    # ``"trending"``/``"ranging"``/``"transitional"`` (or ``None`` when ADX has
+    # too little history) — the single most useful context for deciding whether a
+    # trend-following or mean-reverting plan even makes sense.
+    adx_14: float | None = None
+    regime: str | None = None
 
     bb_upper: float | None = None
     bb_middle: float | None = None
@@ -122,6 +170,9 @@ class IndicatorCalculator:
         frame = self._to_frame(ordered)
 
         close = frame["close"]
+        # RSI is computed once as a full series (not just its last value) so the
+        # trajectory and divergence reads can reuse it without recomputation.
+        rsi_series = ta.rsi(close, length=14) if n >= 15 else None
         snapshot = IndicatorSnapshot(
             as_of=frame.index[-1],
             candles_analyzed=n,
@@ -135,13 +186,16 @@ class IndicatorCalculator:
             ema_20=self._windowed(20, n, lambda: ta.ema(close, length=20)),
             ema_50=self._windowed(50, n, lambda: ta.ema(close, length=50)),
             ema_200=self._windowed(200, n, lambda: ta.ema(close, length=200)),
-            rsi_14=self._windowed(15, n, lambda: ta.rsi(close, length=14)),
+            rsi_14=self._last(rsi_series),
+            rsi_14_prev=self._at(rsi_series, -1 - _TRAJECTORY_LOOKBACK),
             atr_14=self._windowed(
                 15, n, lambda: ta.atr(frame["high"], frame["low"], close, length=14)
             ),
         )
         self._apply_macd(snapshot, close, n)
         self._apply_bbands(snapshot, close, n)
+        self._apply_regime(snapshot, frame, n)
+        self._apply_divergence(snapshot, close, rsi_series)
         return snapshot
 
     def _windowed(
@@ -185,6 +239,17 @@ class IndicatorCalculator:
             return None
         return _clean(series.iloc[-1])
 
+    @staticmethod
+    def _at(series: pd.Series | None, index: int) -> float | None:
+        """Finite value at a (typically negative) positional ``index``, or ``None``.
+
+        Used for the "previous" trajectory reads. Out-of-range or non-finite
+        values collapse to ``None`` so a short series never raises.
+        """
+        if series is None or len(series) < abs(index):
+            return None
+        return _clean(series.iloc[index])
+
     # MACD needs slow(26) + signal(9) bars before its histogram is meaningful.
     _MACD_MIN_ROWS = 35
 
@@ -196,8 +261,10 @@ class IndicatorCalculator:
             return
         # Reference by prefix rather than the full ``MACD_12_26_9`` name so a
         # future parameter tweak doesn't silently null these out.
+        histogram = self._column(macd, "MACDh_")
         snapshot.macd = self._last(self._column(macd, "MACD_"))
-        snapshot.macd_histogram = self._last(self._column(macd, "MACDh_"))
+        snapshot.macd_histogram = self._last(histogram)
+        snapshot.macd_histogram_prev = self._at(histogram, -1 - _TRAJECTORY_LOOKBACK)
         snapshot.macd_signal = self._last(self._column(macd, "MACDs_"))
 
     def _apply_bbands(self, snapshot: IndicatorSnapshot, close: pd.Series, n: int) -> None:
@@ -210,6 +277,64 @@ class IndicatorCalculator:
         snapshot.bb_middle = self._last(self._column(bands, "BBM_"))
         snapshot.bb_upper = self._last(self._column(bands, "BBU_"))
         snapshot.bb_percent = self._last(self._column(bands, "BBP_"))
+
+    def _apply_regime(self, snapshot: IndicatorSnapshot, frame: pd.DataFrame, n: int) -> None:
+        """Compute ADX and the regime label it implies (trending/ranging/…)."""
+        if n < _ADX_MIN_ROWS:
+            return
+        adx = ta.adx(frame["high"], frame["low"], frame["close"], length=14)
+        if adx is None or adx.empty:
+            return
+        snapshot.adx_14 = self._last(self._column(adx, "ADX_"))
+        snapshot.regime = classify_regime(snapshot.adx_14)
+
+    def _apply_divergence(
+        self, snapshot: IndicatorSnapshot, close: pd.Series, rsi: pd.Series | None
+    ) -> None:
+        """Detect regular RSI divergence against the two most-recent price swings.
+
+        Bullish: price prints a lower swing low while RSI prints a higher low
+        (selling pressure fading). Bearish: price a higher swing high while RSI a
+        lower high. Compares only confirmed fractal pivots and skips any pivot
+        whose RSI is undefined, so a short or noisy series simply yields ``None``.
+        """
+        if rsi is None:
+            return
+        closes = [_clean(value) for value in close.tolist()]
+        rsis = [_clean(value) for value in rsi.tolist()]
+
+        lows = find_pivots(closes, left=2, right=2, high=False)
+        if self._diverges(lows, closes, rsis, price_lower=True):
+            snapshot.rsi_divergence = "bullish"
+            return
+        highs = find_pivots(closes, left=2, right=2, high=True)
+        if self._diverges(highs, closes, rsis, price_lower=False):
+            snapshot.rsi_divergence = "bearish"
+
+    @staticmethod
+    def _diverges(
+        pivots: list[int],
+        prices: list[float | None],
+        rsis: list[float | None],
+        *,
+        price_lower: bool,
+    ) -> bool:
+        """Whether the last two ``pivots`` show price/RSI disagreement.
+
+        ``price_lower`` picks the bullish read (price falls, RSI rises) vs the
+        bearish one (price rises, RSI falls). Returns ``False`` unless both
+        pivots carry finite price *and* RSI values.
+        """
+        if len(pivots) < 2:
+            return False
+        older, newer = pivots[-2], pivots[-1]
+        p_old, p_new = prices[older], prices[newer]
+        r_old, r_new = rsis[older], rsis[newer]
+        if None in (p_old, p_new, r_old, r_new):
+            return False
+        if price_lower:
+            return p_new < p_old and r_new > r_old  # type: ignore[operator]
+        return p_new > p_old and r_new < r_old  # type: ignore[operator]
 
     @staticmethod
     def _column(frame: pd.DataFrame, prefix: str) -> pd.Series | None:

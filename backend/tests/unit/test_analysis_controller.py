@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -127,6 +127,14 @@ class _FakeSignalRepo:
 
 
 class _FakeSnapshot:
+    # The gate reads these off the timeframe view; a stub leaves them None so the
+    # trend/regime/divergence evidence is simply "unknown" (no crash).
+    last_close = None
+    ema_50 = None
+    ema_200 = None
+    regime = None
+    rsi_divergence = None
+
     def to_storage_dict(self):
         return {"rsi": 30.0}
 
@@ -218,6 +226,7 @@ def _build(
     timeframes=None,
     scalp=None,
     swing=None,
+    economic_calendar=None,
 ) -> AnalysisController:
     # ``timeframes`` is the union fetched per run; the per-style frames default
     # to that whole set unless overridden, so scalp frames on its lowest member
@@ -232,6 +241,10 @@ def _build(
         analysis_max_concurrency=3,
         signal_scalp_ttl_minutes=240,
         signal_swing_ttl_minutes=4320,
+        # Quality gate + news-awareness knobs (Iteration 10).
+        min_reward_risk=1.5,
+        quality_trade_threshold=0.5,
+        news_blackout_minutes=60,
     )
     return AnalysisController(
         database=_FakeDatabase(store),  # type: ignore[arg-type]
@@ -239,6 +252,7 @@ def _build(
         ai_provider=ai or _FakeAI(),  # type: ignore[arg-type]
         settings=settings,  # type: ignore[arg-type]
         calculator=_FakeCalculator(),  # type: ignore[arg-type]
+        economic_calendar=economic_calendar,
         clock=lambda: _NOW,
     )
 
@@ -517,6 +531,79 @@ async def test_signals_carry_provenance_and_style_specific_timeframe():
         }
     assert by_style[SignalType.SCALP].timeframe == "5m"
     assert by_style[SignalType.SWING].timeframe == "1d"
+
+
+# ── Quality gate + news awareness (Iteration 10) ─────────────────────────────
+
+
+async def test_signals_carry_gate_verdict():
+    """Every persisted signal is gated: should_trade + quality_score + breakdown."""
+    store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
+    ctrl = _build(store)  # default draft has a clean 2:1 reward:risk
+
+    await ctrl.run_analysis()
+
+    for signal in store.signals:
+        assert signal.should_trade is True
+        assert signal.quality_score is not None
+        # The breakdown carries the gate's reasons and the model's self-risks.
+        assert "reasons" in signal.quality_snapshot
+        assert "risks" in signal.quality_snapshot
+
+
+async def test_poor_reward_risk_bias_is_marked_not_tradeable():
+    store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
+    # reward:risk 0.5 (risk 0.01, reward 0.005) — below the 1.5 floor.
+    poor = _draft(entry="1.10000000", tps=("1.10500000",))
+    ctrl = _build(store, ai=_FakeAI(dual=_dual_draft(scalp=poor, swing=poor)))
+
+    await ctrl.run_analysis()
+
+    assert store.signals  # bias is still emitted...
+    for signal in store.signals:
+        assert signal.should_trade is False  # ...but not actionable
+
+
+async def test_news_blackout_vetoes_the_trade():
+    from app.services.calendar import EconomicEvent, StaticEconomicCalendarProvider
+
+    store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
+    calendar = StaticEconomicCalendarProvider(
+        [
+            EconomicEvent(
+                title="CPI",
+                currency="USD",  # affects EURUSD
+                impact="high",
+                scheduled_at=_NOW + timedelta(minutes=30),  # inside the 60m blackout
+            )
+        ]
+    )
+    ctrl = _build(store, economic_calendar=calendar)
+
+    await ctrl.run_analysis()
+
+    assert store.signals
+    for signal in store.signals:
+        assert signal.should_trade is False
+        assert any("CPI" in r for r in signal.quality_snapshot["reasons"])
+
+
+async def test_calendar_failure_does_not_sink_the_run():
+    class _BoomCalendar:
+        async def upcoming(self, *, within, now):
+            raise RuntimeError("calendar provider exploded")
+
+        async def aclose(self):
+            return None
+
+    store = Store(active_pairs=[make_pair(id=1, symbol="EURUSD")])
+    ctrl = _build(store, economic_calendar=_BoomCalendar())
+
+    run = await ctrl.run_analysis()
+
+    # The run still succeeds (news degrades to "unknown"), signals still emitted.
+    assert run.status is AnalysisRunStatus.SUCCESS
+    assert len(store.signals) == 2
 
 
 # ── Pure helpers ─────────────────────────────────────────────────────────────
