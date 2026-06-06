@@ -17,10 +17,12 @@ import {
 } from "lucide-react";
 
 import { CommandPalette } from "@/components/layout/CommandPalette";
+import { LiveIndicator } from "@/components/layout/LiveIndicator";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { StoreHydration } from "@/components/layout/StoreHydration";
 import { Toaster } from "@/components/feedback/Toaster";
 import { Button } from "@/components/ui/Button";
+import { useEventStream } from "@/hooks/useEventStream";
 import { track } from "@/lib/analytics";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
@@ -100,6 +102,9 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const toggleCommandPalette = useUIStore((state) => state.toggleCommandPalette);
   const setLastPath = useUIStore((state) => state.setLastPath);
+  // Open the real-time stream for the whole app session; surface its state in the
+  // header so the user knows whether updates are live or polled.
+  const streamStatus = useEventStream();
 
   useEffect(() => {
     setLastPath(pathname);
@@ -162,6 +167,7 @@ export function AppShell({ children }: AppShellProps) {
               <Command className="h-4 w-4" />
               <span className="hidden text-xs text-[var(--muted)] sm:inline">Ctrl K</span>
             </Button>
+            <LiveIndicator status={streamStatus} />
             <NotificationBell />
           </div>
         </div>

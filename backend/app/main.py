@@ -24,10 +24,17 @@ from app.services.calendar import (
     EconomicCalendarProvider,
     build_economic_calendar_provider,
 )
+from app.services.events import EventBus, build_event_bus
 from app.services.market_data import (
     CachingMarketDataProvider,
     MarketDataProvider,
     build_market_data_provider,
+)
+from app.services.notifications import (
+    NotificationDispatcher,
+    Notifier,
+    build_notifier,
+    build_preferences,
 )
 from app.tasks import ANALYSIS_JOB_ID, OUTCOME_JOB_ID, AnalysisJob, OutcomeJob, Scheduler
 from app.views import api_v1_router
@@ -73,6 +80,18 @@ async def lifespan(app: FastAPI):
     # News awareness: a config-driven calendar (off by default → the null
     # provider, so the pipeline is unchanged unless explicitly enabled).
     economic_calendar: EconomicCalendarProvider = build_economic_calendar_provider(settings)
+    # Real-time spine: a process-local event bus the pipelines publish to and the
+    # SSE endpoint + notification dispatcher consume from. Always constructed (it
+    # is cheap and inert without subscribers) so the stream endpoint always works.
+    event_bus: EventBus = build_event_bus(settings)
+    # Off-platform delivery: a config-driven notifier (off by default → the null
+    # notifier) driven by a background dispatcher that consumes the event bus.
+    notifier: Notifier = build_notifier(settings)
+    notification_dispatcher = NotificationDispatcher(
+        bus=event_bus,
+        notifier=notifier,
+        preferences=build_preferences(settings),
+    )
     scheduler = Scheduler(
         timezone=settings.scheduler_timezone,
         misfire_grace_seconds=settings.scheduler_misfire_grace_seconds,
@@ -80,6 +99,9 @@ async def lifespan(app: FastAPI):
     app.state.market_data_provider = market_data
     app.state.ai_provider = ai_provider
     app.state.economic_calendar = economic_calendar
+    app.state.event_bus = event_bus
+    app.state.notifier = notifier
+    app.state.notification_dispatcher = notification_dispatcher
     app.state.scheduler = scheduler
 
     # The analysis controller is the pipeline. It manages its own database
@@ -92,6 +114,7 @@ async def lifespan(app: FastAPI):
         ai_provider=ai_provider,
         settings=settings,
         economic_calendar=economic_calendar,
+        event_bus=event_bus,
     )
     app.state.analysis_controller = analysis_controller
 
@@ -103,6 +126,7 @@ async def lifespan(app: FastAPI):
         database=database,
         market_data=market_data,
         settings=settings,
+        event_bus=event_bus,
     )
     app.state.outcome_controller = outcome_controller
 
@@ -130,12 +154,21 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Scheduler disabled by configuration (scheduler_enabled=false)")
 
+    # Start consuming events for off-platform delivery only when notifications are
+    # enabled; otherwise the notifier is the null one and a running loop would be
+    # pure overhead. The SSE stream needs no such task — it subscribes per request.
+    if settings.notifications_enabled:
+        notification_dispatcher.start()
+    else:
+        logger.info("Notifications disabled by configuration (notifications_enabled=false)")
+
     try:
         yield
     finally:
         # Reverse order of acquisition; each step guarded so one failure does
         # not abort the rest of the teardown.
         scheduler.shutdown(wait=False)
+        await notification_dispatcher.stop()
         await economic_calendar.aclose()
         await ai_provider.aclose()
         await market_data.aclose()

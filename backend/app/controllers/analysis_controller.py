@@ -90,6 +90,7 @@ from app.services.calendar import (
     EconomicEvent,
     NullEconomicCalendarProvider,
 )
+from app.services.events import EventPublisher, NullEventBus
 from app.services.indicators import IndicatorCalculator
 from app.services.market_data import MarketDataProvider
 from app.services.signal_quality import GateConfig, GateEvidence, GateVerdict, SignalGate
@@ -247,11 +248,16 @@ class AnalysisController:
         structure_analyzer: StructureAnalyzer | None = None,
         gate: SignalGate | None = None,
         economic_calendar: EconomicCalendarProvider | None = None,
+        event_bus: EventPublisher | None = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._database = database
         self._market_data = market_data
         self._ai = ai_provider
+        # Real-time fan-out. A disabled/absent bus is the null publisher, so
+        # publishing is a guaranteed no-op and the pipeline is unchanged when
+        # streaming/notifications are off.
+        self._events = event_bus or NullEventBus()
         # The calculator and structure analyzer are pure and configuration-free;
         # default-construct them but allow injection so tests can substitute
         # deterministic stubs.
@@ -357,7 +363,7 @@ class AnalysisController:
         outcomes = await self._analyze_pairs(targets, events)
 
         try:
-            run = await self._finalize_run(run_id, outcomes)
+            run, signals = await self._finalize_run(run_id, outcomes)
         except Exception:
             # The compute work succeeded but persistence failed (a DB blip on the
             # final commit). Best-effort: stamp the ledger row FAILED in a fresh
@@ -367,17 +373,77 @@ class AnalysisController:
             await self._try_mark_failed(run_id, "result persistence failed")
             raise
 
-        # Two signals (scalp + swing) per non-failed pair.
-        signals_generated = sum(len(SignalType) for o in outcomes if o.emits_signals)
+        # Real-time fan-out — only after the commit, so the stream never announces
+        # a signal that didn't actually land. Best-effort: a publish failure must
+        # not turn a successful, persisted run into an error for the caller.
+        self._emit_events(run, signals, outcomes)
+
         logger.info(
             "Analysis run %s finished: status=%s processed=%d failed=%d signals=%d",
             run.id,
             run.status.value,
             run.pairs_processed,
             run.pairs_failed,
-            signals_generated,
+            len(signals),
         )
         return run
+
+    # ── Real-time events ─────────────────────────────────────────────────────
+
+    def _emit_events(
+        self,
+        run: AnalysisRun,
+        signals: Sequence[Signal],
+        outcomes: Sequence[_PairOutcome],
+    ) -> None:
+        """Publish one ``signal.created`` per persisted signal + one ``run.finished``.
+
+        Wrapped so a misbehaving bus can never undo a committed run. Every
+        attribute read here is a scalar already loaded on the detached row
+        (``expire_on_commit=False``), so there is no lazy-load risk.
+        """
+        symbols = {o.target.id: o.target.symbol for o in outcomes}
+        try:
+            for signal in signals:
+                self._events.publish(
+                    "signal.created",
+                    self._signal_created_payload(signal, symbols.get(signal.pair_id)),
+                )
+            self._events.publish(
+                "run.finished",
+                {
+                    "run_id": str(run.id),
+                    "status": run.status.value,
+                    "pairs_processed": run.pairs_processed,
+                    "pairs_failed": run.pairs_failed,
+                    "signals_generated": len(signals),
+                },
+            )
+        except Exception:  # the run is already committed — never fail it on a publish
+            logger.exception("Failed to publish events for analysis run %s", run.id)
+
+    @staticmethod
+    def _signal_created_payload(signal: Signal, symbol: str | None) -> dict[str, object]:
+        """JSON-serialisable ``signal.created`` payload (Decimals→str, enums→value)."""
+
+        def _money(value: Decimal | None) -> str | None:
+            return str(value) if value is not None else None
+
+        return {
+            "signal_id": str(signal.id),
+            "pair_id": signal.pair_id,
+            "pair": symbol,
+            "signal_type": signal.signal_type.value,
+            "direction": signal.direction.value,
+            "confidence": signal.confidence,
+            "entry": _money(signal.entry_price),
+            "stop_loss": _money(signal.stop_loss),
+            "take_profit": _money(signal.take_profit),
+            "timeframe": signal.timeframe,
+            "should_trade": signal.should_trade,
+            "quality_score": signal.quality_score,
+            "generated_at": signal.generated_at.isoformat(),
+        }
 
     # ── Phase 1: open the run ledger ─────────────────────────────────────────
 
@@ -667,11 +733,14 @@ class AnalysisController:
         self,
         run_id: uuid.UUID,
         outcomes: Sequence[_PairOutcome],
-    ) -> AnalysisRun:
+    ) -> tuple[AnalysisRun, list[Signal]]:
         """Atomically write the run's signals and stamp its terminal status.
 
         Signals and the ledger update share one transaction so a run's reported
-        counts can never disagree with the signal rows actually committed.
+        counts can never disagree with the signal rows actually committed. Returns
+        the run *and* the persisted signal rows so the caller can fan them out to
+        the event bus after the commit (never before — the stream must not
+        announce a signal that didn't land).
         """
         generated_at = self._clock()
         signals = [
@@ -712,7 +781,7 @@ class AnalysisController:
 
             await session.commit()
 
-        return run
+        return run, signals
 
     @staticmethod
     def _sum_usage(outcomes: Sequence[_PairOutcome]) -> TokenUsage | None:

@@ -211,19 +211,30 @@ Goal: make Gold signals aware of the news that actually moves Gold (USD, Fed, CP
   the null provider, so the endpoint returns `enabled: false` with no events and the
   pipeline behaves exactly as today).
 
-### Iteration 11 - Real-time Streaming + Notifications (20 points)
+### Iteration 11 - Real-time Streaming + Notifications (20 points) ✅ DONE
 Goal: push updates instead of being polled, and deliver signals off-platform.
-- [ ] (5) In-process event bus: the analysis and outcome jobs publish
-  `signal.created`, `signal.closed`, and `run.finished` events.
-- [ ] (5) `GET /api/v1/stream` Server-Sent Events endpoint streaming those events to
-  connected clients (keep-alive heartbeat + `Last-Event-ID` resume). SSE over
-  WebSockets because the flow is one-way server→client.
-- [ ] (4) `Notifier` ABC + `TelegramNotifier` concrete (bot token + chat id in
-  config), fired on a new high-confidence signal and on outcome close.
-- [ ] (3) Notification preferences (min confidence, styles, which events) applied
-  before dispatch.
-- [ ] (3) Config + health: a `notifications` health component reporting
-  configured/enabled/not_configured like the existing provider components.
+- [x] (5) In-process event bus (`services/events/`): the analysis and outcome
+  controllers publish `signal.created`, `signal.closed`, and `run.finished` events
+  — always *after* the commit, so the stream never announces a signal/close that
+  didn't land. An `EventPublisher` ABC is the producer seam (a `NullEventBus` for
+  tests, a future Redis/NATS backend for multi-replica scale-out); the concrete
+  `EventBus` fans out to bounded per-subscriber queues and keeps a ring buffer for
+  resume. Publishing is synchronous, non-blocking, and can never fail a run.
+- [x] (5) `GET /api/v1/stream` Server-Sent Events endpoint streaming those events to
+  connected clients (keep-alive heartbeat + `Last-Event-ID` resume; a slow client
+  is disconnected and resumes from the replay buffer rather than growing memory).
+  SSE over WebSockets because the flow is one-way server→client. The streaming
+  loop is factored out (takes a plain `is_disconnected` callable) so it is
+  unit-testable without a live ASGI server.
+- [x] (4) `Notifier` ABC + `TelegramNotifier` concrete (`services/notifications/`,
+  bot token + chat id in config), plus a `NullNotifier` default and a background
+  `NotificationDispatcher` that consumes the bus and delivers — every send isolated
+  so a Telegram outage never disturbs the pipeline.
+- [x] (3) Notification preferences (min confidence, styles, actionable-only, which
+  events) — a *pure*, unit-tested policy applied before dispatch.
+- [x] (3) Config + health: a `notifications` health component reporting
+  enabled/not_configured/down like the existing provider components. Off by default
+  (`NOTIFICATIONS_ENABLED=false`) — the null notifier, so the path is inert.
 
 ### Iteration 12 - Risk & Position Sizing (10 points)
 Goal: turn a signal into an exact, account-aware trade.
@@ -339,6 +350,16 @@ All v1 responses follow a consistent shape so the frontend never has to special-
 | `scheduler_enabled` | `bool` | run the analysis job on this instance (default true) |
 | `scheduler_timezone` | `str` | default `UTC` |
 | `scheduler_misfire_grace_seconds` | `int` | `1 ≤ value ≤ 3600` (default 60) |
+| `stream_heartbeat_seconds` | `int` | `1 ≤ value ≤ 300` (default 15) — SSE keep-alive cadence |
+| `stream_max_queue` | `int` | `1 ≤ value ≤ 10000` (default 100) — per-client SSE buffer; overflow → reconnect |
+| `stream_replay_buffer` | `int` | `0 ≤ value ≤ 10000` (default 200) — ring buffer for `Last-Event-ID` resume |
+| `notifications_enabled` | `bool` | off → null notifier (default false) |
+| `notification_provider` | `Literal["telegram"]` | rejects unknown providers |
+| `telegram_bot_token` / `telegram_chat_id` | `str` | required (validated) when notifications enabled |
+| `notification_min_confidence` | `float` | `0.0 ≤ value ≤ 1.0` (default 0.7) |
+| `notification_signal_types` | `list[str]` | CSV; subset of `scalp,swing` (empty = no style filter) |
+| `notification_only_actionable` | `bool` | only `should_trade` signals notify (default true) |
+| `notification_on_signal_created` / `notification_on_signal_closed` | `bool` | per-event toggles (default true) |
 
 ### App factory
 
@@ -641,6 +662,7 @@ swappable and the logic framework-free).
 | `POST /api/v1/analysis/runs` | `AnalysisController.run_manual` | `202` + `APIResponse[AnalysisRunAccepted]` |
 | `GET /api/v1/performance` | `PerformanceController.get_performance` | `APIResponse[PerformanceResponse]` — `?pair=`/`?signal_type=`/`?from=`/`?to=` filters |
 | `GET /api/v1/calendar` | `CalendarController.get_upcoming` | `APIResponse[CalendarResponse]` — upcoming high-impact events; `?within_hours=` (1..168, default 24) |
+| `GET /api/v1/stream` | `EventBus` (via the SSE view) | `text/event-stream` — live `signal.created`/`signal.closed`/`run.finished` events; `Last-Event-ID` header (or `?last_event_id=`) resumes |
 
 Two read controllers were added so the pairs and analysis routers stay
 layering-compliant: `PairController` (pairs are small and enumerable, so its
@@ -909,6 +931,59 @@ mirrors the market-data pattern: ABC + null + static + factory, behind
 and feeds news proximity into the gate. `GET /api/v1/calendar` exposes them for the
 frontend banner (`enabled` distinguishes "feature off" from "nothing scheduled").
 
+### Real-time streaming + notifications (Iteration 11 deliverable)
+
+The platform stops being purely *polled*: the pipelines now **push** what they
+do, both to open browsers and off-platform. One in-process event bus is the spine;
+two independent consumers hang off it.
+
+**Event bus** (`services/events/`). The analysis and outcome controllers publish
+domain events — `signal.created`, `signal.closed`, `run.finished` — and crucially
+do so **only after the commit** (the finalise transaction returns the persisted
+rows, which are then projected to JSON-serialisable payloads), so the stream can
+never announce a signal or close that didn't actually land. Publishing is a plain
+synchronous call wrapped so a bus error can never undo a committed run. The
+`EventPublisher` ABC is the producer seam — a `NullEventBus` keeps controllers
+testable and publishing inert where streaming is irrelevant, and is the single
+point a future Redis/NATS backend slots into for multi-replica scale-out (the same
+provider-swap pattern as market data/calendar). The concrete `EventBus` fans each
+event out to **bounded** per-subscriber queues (a slow consumer is *dropped*, not
+allowed to apply backpressure to the pipeline) and retains a ring buffer of recent
+events for `Last-Event-ID` resume. Ids are a process-local monotonic counter.
+
+**Streaming** (`GET /api/v1/stream`). A Server-Sent-Events endpoint — SSE not
+WebSockets, because the flow is strictly one-way server→client, rides plain HTTP,
+and reconnects + resumes natively. Each connection subscribes, replays anything
+missed since its `Last-Event-ID` (header, or `?last_event_id=` for non-browsers),
+then streams live events with a keep-alive comment every
+`STREAM_HEARTBEAT_SECONDS` so idle proxies don't hang up. A client that overflows
+its bounded queue is sent a `reconnect` nudge and disconnected; it reconnects and
+resumes from the replay buffer rather than the server growing memory for it. The
+streaming loop is a free function taking a plain `is_disconnected` callable, so the
+whole lifecycle (replay → heartbeat → live → slow-consumer reconnect) is
+unit-tested without a live server.
+
+**Notifications** (`services/notifications/`). The off-platform sink mirrors the
+other provider families: a `Notifier` ABC behind `build_notifier`, with a
+`NullNotifier` default (the whole path inert unless enabled) and a
+`TelegramNotifier` that posts to the Bot API `sendMessage` (bot token + chat id —
+the "chatbot id" an operator drops in to go live; HTML-escaped, error-mapped to
+`NotificationError`, `httpx.MockTransport`-tested). A pure, unit-tested
+`NotificationPreferences` decides *which* events notify (min confidence, styles,
+actionable-only, per-event toggles) and `render` projects an event onto a
+channel-agnostic `NotificationMessage`. The `NotificationDispatcher` is the thin
+bus→notifier bridge: a single background task started in the lifespan (only when
+enabled), subscribing **synchronously in `start()`** so no post-start event is
+missed, with every delivery isolated so a Telegram outage never disturbs the
+pipeline or stops later notifications. Health gains a `notifications` component
+(enabled+running → `ok`, enabled-but-stopped → `down`, disabled/absent →
+`not_configured`), exactly like the scheduler.
+
+Everything is **off by default and additive**: with `NOTIFICATIONS_ENABLED=false`
+the notifier is the null one and no dispatcher runs; the event bus is always
+constructed (cheap, inert without subscribers) so `GET /api/v1/stream` always
+works — it simply has nothing to push until a run completes.
+
 ## 🧪 Run
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -942,14 +1017,17 @@ ruff format --check .
 pyright
 ```
 
-### ✅ Verification status (Iterations 1–10)
+### ✅ Verification status (Iterations 1–11)
 Last verified on 2026-06-06:
-- `pytest` — **453 passed** (389 through Iteration 9, then Iteration 10's
-  structure analyzer, enriched-indicator (trajectory/regime/divergence), signal
-  quality-gate, economic-calendar provider + factory, calendar controller and
-  `GET /api/v1/calendar` route tests, plus the controller gating/news-veto tests)
+- `pytest` — **514 passed** (453 through Iteration 10, then Iteration 11's event
+  bus (ids/replay/fan-out/slow-consumer-drop), notifications (pure preferences +
+  rendering, `NullNotifier`, `TelegramNotifier` via `httpx.MockTransport`, the
+  dispatcher end-to-end over the bus), the SSE streaming loop (replay → heartbeat →
+  live → reconnect) + route response, the new streaming/notification config
+  validation, the `notifications` health component, the controller post-commit
+  event-publish tests, and the lifespan event-bus/dispatcher wiring)
 - `ruff check .` — clean
-- `ruff format --check .` — clean (109 files)
+- `ruff format --check .` — clean (128 files)
 - `alembic upgrade head --sql` renders cleanly through `0006_signal_quality`
   (single linear head); the new quality-gate columns carry their convention names
   (`ck_signals_quality_score_in_unit_interval`, `ix_signals_should_trade`) and

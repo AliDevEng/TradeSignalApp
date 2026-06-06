@@ -44,6 +44,36 @@ async def test_lifespan_constructs_and_starts_services():
     assert app.state.scheduler.running is False
 
 
+async def test_lifespan_constructs_event_bus_and_notifications_off_by_default():
+    app = create_app(_settings())
+    async with app.router.lifespan_context(app):
+        state = app.state
+        # The event bus always exists (the stream endpoint always works)…
+        assert state.event_bus is not None
+        # …but the notifier is the null one and the dispatcher is not running
+        # while notifications are disabled (the default).
+        assert state.notifier.provider_name == "null"
+        assert state.notification_dispatcher.running is False
+
+
+async def test_lifespan_starts_dispatcher_when_notifications_enabled():
+    app = create_app(
+        _settings(
+            notifications_enabled=True,
+            telegram_bot_token="token",
+            telegram_chat_id="123",
+        )
+    )
+    async with app.router.lifespan_context(app):
+        state = app.state
+        assert state.notifier.provider_name == "telegram"
+        assert state.notification_dispatcher.running is True
+
+    # Shutdown cancels the dispatcher task.
+    await asyncio.sleep(0)
+    assert app.state.notification_dispatcher.running is False
+
+
 async def test_lifespan_respects_scheduler_disabled():
     app = create_app(_settings(scheduler_enabled=False))
     async with app.router.lifespan_context(app):

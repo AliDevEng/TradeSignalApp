@@ -31,12 +31,14 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from app.config import Settings
 from app.database import Database
 from app.database.repository import PairRepository, SignalRepository
 from app.models import Signal, SignalOutcome
 from app.services import ServiceError
+from app.services.events import EventPublisher, NullEventBus
 from app.services.market_data import Candle, MarketDataProvider
 from app.services.outcome import EvaluationInput, OutcomeEvaluator
 
@@ -75,11 +77,15 @@ class OutcomeController:
         market_data: MarketDataProvider,
         settings: Settings,
         evaluator: OutcomeEvaluator | None = None,
+        event_bus: EventPublisher | None = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._database = database
         self._market_data = market_data
         self._evaluator = evaluator or OutcomeEvaluator()
+        # Real-time fan-out — a disabled/absent bus is the null publisher, so
+        # publishing is a no-op and the sweep is unchanged when streaming is off.
+        self._events = event_bus or NullEventBus()
         self._clock = clock
         # Evaluate against the lowest configured timeframe — the finest-grained
         # fills, and a single fetch per pair. ``analysis_timeframes`` is the
@@ -158,8 +164,12 @@ class OutcomeController:
     ) -> OutcomeRunSummary:
         now = self._clock()
         evaluated = 0
-        closed = 0
         evaluable = {t.id for t in targets if t.id not in fetch_failures}
+        symbols = {t.id: t.symbol for t in targets}
+        # Signals that transitioned to a terminal outcome *this* cycle, captured
+        # for the post-commit event fan-out (never before the commit, so the
+        # stream can't announce a close that didn't persist).
+        newly_closed: list[Signal] = []
 
         async with self._database.session() as session:
             signals_repo = SignalRepository(session)
@@ -176,14 +186,41 @@ class OutcomeController:
                     self._apply(signals_repo, signal, candles, now=now)
                     evaluated += 1
                     if signal.outcome is not SignalOutcome.OPEN:
-                        closed += 1
+                        newly_closed.append(signal)
             await session.commit()
+
+        self._emit_closed(newly_closed, symbols)
 
         return OutcomeRunSummary(
             evaluated=evaluated,
-            closed=closed,
+            closed=len(newly_closed),
             pairs_failed=len(fetch_failures),
         )
+
+    def _emit_closed(self, closed: Sequence[Signal], symbols: dict[int, str]) -> None:
+        """Publish one ``signal.closed`` per signal that closed this cycle.
+
+        Wrapped so a misbehaving bus can never undo a committed sweep. Reads only
+        scalar columns on the detached rows (``expire_on_commit=False``).
+        """
+        try:
+            for signal in closed:
+                realized = signal.realized_r
+                self._events.publish(
+                    "signal.closed",
+                    {
+                        "signal_id": str(signal.id),
+                        "pair_id": signal.pair_id,
+                        "pair": symbols.get(signal.pair_id),
+                        "signal_type": signal.signal_type.value,
+                        "direction": signal.direction.value,
+                        "outcome": signal.outcome.value,
+                        "realized_r": str(realized) if isinstance(realized, Decimal) else None,
+                        "closed_at": signal.closed_at.isoformat() if signal.closed_at else None,
+                    },
+                )
+        except Exception:  # the sweep is already committed — never fail it on a publish
+            logger.exception("Failed to publish signal.closed events")
 
     def _apply(
         self,

@@ -302,4 +302,21 @@ Create `.env.local`:
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_APP_NAME=TradeSignal AI
+
+# Real-time updates via the backend SSE stream (GET /api/v1/stream). On by
+# default; set to "false" to use polling only (e.g. behind a proxy that buffers
+# event streams). The header's Live/Offline indicator reflects this connection.
+# NEXT_PUBLIC_STREAM_ENABLED=true
 ```
+
+### Real-time stream (Iteration 11)
+
+The app opens one `EventSource` to `GET /api/v1/stream` for the whole session
+(`useEventStream`, mounted in `AppShell`). Incoming `signal.created` /
+`signal.closed` / `run.finished` events invalidate the affected React-Query
+caches so the dashboard, signal feed, runs, and performance views refresh the
+instant something changes server-side — with polling as the always-on fallback.
+Signal events also raise a toast + a persistent notification (deduped against the
+poll-based notifier so nothing is announced twice). A header `LiveIndicator`
+shows whether the stream is `Live`, `Connecting`, or `Offline`. `EventSource`
+reconnects and resumes (`Last-Event-ID`) automatically.

@@ -32,6 +32,7 @@ from app.database.repository import (
 )
 from app.services.ai import AIProvider
 from app.services.calendar import EconomicCalendarProvider
+from app.services.events import EventBus
 from app.services.market_data import MarketDataProvider
 from app.tasks import Scheduler
 
@@ -222,6 +223,13 @@ def get_economic_calendar(request: Request) -> EconomicCalendarProvider:
 
 
 EconomicCalendarDep = Annotated[EconomicCalendarProvider, Depends(get_economic_calendar)]
+
+
+def get_event_bus(request: Request) -> EventBus:
+    return _require_state(request, "event_bus", "Event bus")  # type: ignore[return-value]
+
+
+EventBusDep = Annotated[EventBus, Depends(get_event_bus)]
 
 
 def get_calendar_controller(

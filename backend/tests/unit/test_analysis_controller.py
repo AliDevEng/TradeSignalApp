@@ -227,6 +227,7 @@ def _build(
     scalp=None,
     swing=None,
     economic_calendar=None,
+    event_bus=None,
 ) -> AnalysisController:
     # ``timeframes`` is the union fetched per run; the per-style frames default
     # to that whole set unless overridden, so scalp frames on its lowest member
@@ -253,6 +254,7 @@ def _build(
         settings=settings,  # type: ignore[arg-type]
         calculator=_FakeCalculator(),  # type: ignore[arg-type]
         economic_calendar=economic_calendar,
+        event_bus=event_bus,
         clock=lambda: _NOW,
     )
 
@@ -636,3 +638,56 @@ def test_summarise_errors_is_truncated_when_oversized():
     assert summary is not None
     assert len(summary) <= ac._MAX_ERROR_SUMMARY
     assert summary.endswith("…")
+
+
+# ── Real-time event publishing (Iteration 11) ─────────────────────────────────
+
+
+class _CapturingBus:
+    """A minimal EventPublisher that records every published event."""
+
+    def __init__(self) -> None:
+        self.events: list = []
+
+    def publish(self, event_type, data):
+        from datetime import UTC, datetime
+
+        from app.services.events import Event
+
+        event = Event(id=len(self.events) + 1, type=event_type, at=datetime.now(UTC), data=data)
+        self.events.append(event)
+        return event
+
+
+async def test_publishes_signal_created_and_run_finished_after_commit():
+    store = Store(active_pairs=[make_pair(id=1, symbol="XAUUSD")])
+    bus = _CapturingBus()
+    ctrl = _build(store, event_bus=bus)
+
+    run = await ctrl.run_analysis()
+
+    created = [e for e in bus.events if e.type == "signal.created"]
+    finished = [e for e in bus.events if e.type == "run.finished"]
+    # One scalp + one swing created, then a single run.finished.
+    assert len(created) == 2
+    assert len(finished) == 1
+    # Payloads carry the projected scalar fields the stream/notifier consume.
+    payload = created[0].data
+    assert payload["pair"] == "XAUUSD"
+    assert payload["direction"] == "buy"
+    assert payload["signal_id"]
+    assert isinstance(payload["entry"], str)  # Decimal serialised to string
+    assert finished[0].data["run_id"] == str(run.id)
+    assert finished[0].data["signals_generated"] == 2
+
+
+async def test_no_events_published_when_persistence_fails():
+    store = Store(active_pairs=[make_pair(id=1, symbol="XAUUSD")], fail_add_all=True)
+    bus = _CapturingBus()
+    ctrl = _build(store, event_bus=bus)
+
+    with pytest.raises(RuntimeError):
+        await ctrl.run_analysis()
+
+    # The commit never happened, so nothing must have been announced.
+    assert bus.events == []

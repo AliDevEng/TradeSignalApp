@@ -113,7 +113,7 @@ def _patch_repositories(monkeypatch):
     monkeypatch.setattr(oc, "SignalRepository", _FakeSignalRepo)
 
 
-def _build(store: Store, *, market_data=None) -> OutcomeController:
+def _build(store: Store, *, market_data=None, event_bus=None) -> OutcomeController:
     settings = type(
         "S",
         (),
@@ -123,8 +123,23 @@ def _build(store: Store, *, market_data=None) -> OutcomeController:
         database=_FakeDatabase(store),  # type: ignore[arg-type]
         market_data=market_data or _FakeMarketData(),  # type: ignore[arg-type]
         settings=settings,  # type: ignore[arg-type]
+        event_bus=event_bus,
         clock=lambda: _NOW,
     )
+
+
+class _CapturingBus:
+    """A minimal EventPublisher that records every published event."""
+
+    def __init__(self) -> None:
+        self.events: list = []
+
+    def publish(self, event_type, data):
+        from app.services.events import Event
+
+        event = Event(id=len(self.events) + 1, type=event_type, at=_NOW, data=data)
+        self.events.append(event)
+        return event
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -217,6 +232,40 @@ async def test_fetch_failure_isolates_pair_and_counts_it():
     assert summary.closed == 1
     assert good_signal.outcome is SignalOutcome.HIT_TP1
     assert bad_signal.outcome is SignalOutcome.OPEN  # untouched by the failed pair
+
+
+async def test_publishes_signal_closed_only_for_newly_closed():
+    pair = make_pair(id=1, symbol="XAUUSD")
+    closing = make_signal(
+        pair=pair,
+        pair_id=1,
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("104"),
+        generated_at=_GEN,
+    )
+    staying_open = make_signal(
+        pair=pair,
+        pair_id=1,
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("98"),
+        take_profit=Decimal("130"),
+        generated_at=_GEN,
+    )
+    store = Store(active_pairs=[pair], open_signals={1: [closing, staying_open]})
+    md = _FakeMarketData(candles=[_candle(5, o=100, h=105, low=99, c=104)])
+    bus = _CapturingBus()
+    ctrl = _build(store, market_data=md, event_bus=bus)
+
+    await ctrl.run_outcomes()
+
+    closed_events = [e for e in bus.events if e.type == "signal.closed"]
+    assert len(closed_events) == 1  # only the one that actually closed
+    payload = closed_events[0].data
+    assert payload["pair"] == "XAUUSD"
+    assert payload["outcome"] == "hit_tp1"
+    assert payload["signal_id"] == str(closing.id)
+    assert payload["realized_r"] == "2.0000"
 
 
 async def test_no_session_held_across_fetch():

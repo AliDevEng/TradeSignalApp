@@ -17,14 +17,24 @@ const envSchema = z.object({
   // signals as if they were live (see the preview helpers). Accepts "true"/"1".
   NEXT_PUBLIC_PREVIEW_DATA: z
     .preprocess((value) => value === true || value === "true" || value === "1", z.boolean())
-    .catch(false)
+    .catch(false),
+  // Real-time updates via the backend SSE stream (GET /api/v1/stream). On by
+  // default; set to "false"/"0" to fall back to polling only (e.g. behind a proxy
+  // that buffers event streams). Accepts "true"/"1"/"false"/"0".
+  NEXT_PUBLIC_STREAM_ENABLED: z
+    .preprocess(
+      (value) => !(value === false || value === "false" || value === "0"),
+      z.boolean()
+    )
+    .catch(true)
 });
 
 export const env = envSchema.parse({
   NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
   NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
-  NEXT_PUBLIC_PREVIEW_DATA: process.env.NEXT_PUBLIC_PREVIEW_DATA
+  NEXT_PUBLIC_PREVIEW_DATA: process.env.NEXT_PUBLIC_PREVIEW_DATA,
+  NEXT_PUBLIC_STREAM_ENABLED: process.env.NEXT_PUBLIC_STREAM_ENABLED
 });
 
 /**
@@ -33,3 +43,6 @@ export const env = envSchema.parse({
  * trade levels indistinguishably from live ones.
  */
 export const PREVIEW_DATA_ENABLED = env.NEXT_PUBLIC_PREVIEW_DATA;
+
+/** Whether the client should open the live SSE stream for real-time updates. */
+export const STREAM_ENABLED = env.NEXT_PUBLIC_STREAM_ENABLED;

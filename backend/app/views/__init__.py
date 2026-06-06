@@ -7,7 +7,7 @@ attach one router to the app — the only place that knows the version string.
 
 from fastapi import APIRouter
 
-from app.views import analysis, calendar, health, pairs, performance, signals
+from app.views import analysis, calendar, health, pairs, performance, signals, stream
 
 api_v1_router = APIRouter(prefix="/api/v1")
 api_v1_router.include_router(health.router)
@@ -16,5 +16,6 @@ api_v1_router.include_router(pairs.router)
 api_v1_router.include_router(analysis.router)
 api_v1_router.include_router(performance.router)
 api_v1_router.include_router(calendar.router)
+api_v1_router.include_router(stream.router)
 
 __all__ = ["api_v1_router"]

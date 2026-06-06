@@ -67,9 +67,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_signals_should_trade", table_name="signals")
-    op.drop_constraint(
-        "ck_signals_quality_score_in_unit_interval", "signals", type_="check"
-    )
+    op.drop_constraint("ck_signals_quality_score_in_unit_interval", "signals", type_="check")
     op.drop_column("signals", "quality_snapshot")
     op.drop_column("signals", "quality_score")
     op.drop_column("signals", "should_trade")

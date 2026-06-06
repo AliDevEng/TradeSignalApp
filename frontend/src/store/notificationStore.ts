@@ -26,6 +26,14 @@ type NotificationState = {
    * later calls announce genuinely new signals.
    */
   registerSignals: (signals: Signal[]) => AppNotification[];
+  /**
+   * Push a notification raised by the real-time stream. Deduped by notification
+   * id (so a poll/stream race can't double-announce). When `markSeenSignalId` is
+   * given, that signal id is also recorded as seen so the polling path
+   * ({@link registerSignals}) won't re-announce the same new signal. Returns
+   * whether a new notification was added.
+   */
+  pushLiveNotification: (notification: AppNotification, markSeenSignalId?: string) => boolean;
 };
 
 const MAX_NOTIFICATIONS = 30;
@@ -77,6 +85,29 @@ export const useNotificationStore = create<NotificationState>()(
         });
 
         return created;
+      },
+      pushLiveNotification: (notification, markSeenSignalId) => {
+        const { notifications, seenSignalIds } = get();
+
+        // Already in the feed → no-op (a poll/stream race, or a duplicate frame).
+        if (notifications.some((item) => item.id === notification.id)) {
+          if (markSeenSignalId && !seenSignalIds.includes(markSeenSignalId)) {
+            set({ seenSignalIds: [...seenSignalIds, markSeenSignalId] });
+          }
+          return false;
+        }
+        // The polling path already announced this signal — don't repeat it.
+        if (markSeenSignalId && seenSignalIds.includes(markSeenSignalId)) {
+          return false;
+        }
+
+        set({
+          notifications: [notification, ...notifications].slice(0, MAX_NOTIFICATIONS),
+          seenSignalIds: markSeenSignalId
+            ? [...seenSignalIds, markSeenSignalId]
+            : seenSignalIds
+        });
+        return true;
       }
     }),
     {

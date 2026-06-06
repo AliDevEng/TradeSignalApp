@@ -45,6 +45,28 @@ def _scheduler_status(scheduler: object, *, enabled: bool) -> ComponentStatus:
     return ComponentStatus(status="not_configured", detail="Scheduler disabled by config")
 
 
+def _notifications_status(
+    notifier: object, dispatcher: object, *, enabled: bool
+) -> ComponentStatus:
+    """Map the notification subsystem's state to a component status.
+
+    Mirrors the scheduler's four-case logic so "off by config" reads as benign
+    (``not_configured``) while "should be running but isn't" reads as a real
+    anomaly (``down``):
+    - disabled by config                         → not_configured (benign)
+    - absent (app built without lifespan)        → not_configured
+    - enabled and the dispatcher is consuming     → ok
+    - enabled but the dispatcher stopped/crashed  → down (a real anomaly)
+    """
+    if not enabled:
+        return ComponentStatus(status="not_configured", detail="Notifications disabled by config")
+    if notifier is None or dispatcher is None:
+        return ComponentStatus(status="not_configured", detail="Notifications not initialised")
+    if getattr(dispatcher, "running", False):
+        return ComponentStatus(status="ok")
+    return ComponentStatus(status="down", detail="Notifications enabled but dispatcher not running")
+
+
 def _readiness(component: object, label: str) -> ComponentStatus:
     """Presence-based readiness for external providers.
 
@@ -78,6 +100,11 @@ async def health_check(
             getattr(state, "market_data_provider", None), "Market data provider"
         ),
         "ai_provider": _readiness(getattr(state, "ai_provider", None), "AI provider"),
+        "notifications": _notifications_status(
+            getattr(state, "notifier", None),
+            getattr(state, "notification_dispatcher", None),
+            enabled=settings.notifications_enabled,
+        ),
     }
 
     return HealthResponse(

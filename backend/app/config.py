@@ -10,6 +10,7 @@ from app.timeframes import timeframe_minutes
 Environment = Literal["development", "staging", "production", "test"]
 AIProvider = Literal["groq", "anthropic"]
 MarketDataProvider = Literal["twelve_data"]
+NotificationProvider = Literal["telegram"]
 Timeframe = Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
 
 
@@ -152,6 +153,43 @@ class Settings(BaseSettings):
     # the JSON payload can't balloon — a line chart can't resolve more anyway.
     performance_equity_max_points: int = Field(default=500, ge=2, le=10000)
 
+    # ── Real-time streaming (SSE) ──────────────────────────────────────────────
+    # The ``GET /api/v1/stream`` endpoint pushes signal/run events to connected
+    # browsers instead of being polled. A keep-alive comment is sent every
+    # ``stream_heartbeat_seconds`` so idle proxies don't drop the connection.
+    # ``stream_max_queue`` bounds each connected client's in-memory buffer — a
+    # client that can't keep up is disconnected (it reconnects and resumes via
+    # ``Last-Event-ID``) rather than being allowed to grow memory unbounded.
+    # ``stream_replay_buffer`` is the ring of recent events retained for that
+    # resume; a client offline longer than this many events resumes from the
+    # oldest retained.
+    stream_heartbeat_seconds: int = Field(default=15, ge=1, le=300)
+    stream_max_queue: int = Field(default=100, ge=1, le=10000)
+    stream_replay_buffer: int = Field(default=200, ge=0, le=10000)
+
+    # ── Notifications ──────────────────────────────────────────────────────────
+    # Off by default: when disabled the notifier is a no-op, so the whole path is
+    # inert (exactly as if the feature did not exist). When enabled, a background
+    # dispatcher consumes the same events the stream serves and pushes the ones
+    # that pass the preferences below to the configured channel. ``telegram`` is
+    # the only provider today; it needs a bot token and a chat id (the "chatbot
+    # id" an operator supplies) — both validated at startup when enabled.
+    notifications_enabled: bool = False
+    notification_provider: NotificationProvider = "telegram"
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    notification_timeout_seconds: float = Field(default=10.0, gt=0.0, le=60.0)
+    # Preferences — the pure filter applied before dispatch. Defaults are
+    # conservative: only reasonably-confident, *actionable* new signals and any
+    # close, for both styles.
+    notification_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    notification_signal_types: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["scalp", "swing"]
+    )
+    notification_only_actionable: bool = True
+    notification_on_signal_created: bool = True
+    notification_on_signal_closed: bool = True
+
     # ── Scheduler ──────────────────────────────────────────────────────────
     # Disable on API-only replicas so the analysis job runs on exactly one
     # instance in a horizontally-scaled deployment (running it everywhere
@@ -174,6 +212,7 @@ class Settings(BaseSettings):
         "cors_allowed_origins",
         "scalp_timeframes",
         "swing_timeframes",
+        "notification_signal_types",
         mode="before",
     )
     @classmethod
@@ -181,6 +220,26 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("notification_signal_types")
+    @classmethod
+    def _validate_notification_styles(cls, value: list[str]) -> list[str]:
+        """Normalise + validate the styles a notification may fire for.
+
+        Each entry must be a known signal style; an empty list means "no style
+        filter" (any style notifies). Failing fast on a typo (``scal``) is far
+        easier to diagnose than silently never notifying.
+        """
+        allowed = {"scalp", "swing"}
+        deduped: list[str] = []
+        for style in (s.strip().lower() for s in value):
+            if not style:
+                continue
+            if style not in allowed:
+                raise ValueError(f"invalid signal style {style!r}; allowed: {sorted(allowed)}")
+            if style not in deduped:
+                deduped.append(style)
+        return deduped
 
     @field_validator("active_pairs")
     @classmethod

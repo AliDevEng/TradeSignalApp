@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.views.health import _readiness, _scheduler_status
+from app.views.health import _notifications_status, _readiness, _scheduler_status
 
 
 def test_scheduler_absent_is_not_configured():
@@ -40,3 +40,25 @@ def test_readiness_present_is_ok():
 
 def test_readiness_absent_is_not_configured():
     assert _readiness(None, "X").status == "not_configured"
+
+
+def test_notifications_disabled_is_not_configured():
+    status = _notifications_status(object(), SimpleNamespace(running=True), enabled=False)
+    assert status.status == "not_configured"
+
+
+def test_notifications_enabled_and_running_is_ok():
+    notifier = object()
+    dispatcher = SimpleNamespace(running=True)
+    assert _notifications_status(notifier, dispatcher, enabled=True).status == "ok"
+
+
+def test_notifications_enabled_but_dispatcher_stopped_is_down():
+    """Enabled but the dispatcher isn't consuming is a real anomaly."""
+    status = _notifications_status(object(), SimpleNamespace(running=False), enabled=True)
+    assert status.status == "down"
+    assert status.detail
+
+
+def test_notifications_enabled_but_absent_is_not_configured():
+    assert _notifications_status(None, None, enabled=True).status == "not_configured"
