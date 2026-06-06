@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, BellRing, Check } from "lucide-react";
+import { Bell, BellRing, Check, Settings } from "lucide-react";
 
 import { RelativeTime } from "@/components/common/RelativeTime";
 import { Button } from "@/components/ui/Button";
 import { useSignalsQuery } from "@/hooks/useTradeQueries";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
+import { useNotificationPrefsStore } from "@/store/notificationPrefsStore";
 import { useNotificationStore } from "@/store/notificationStore";
 import { toast } from "@/store/toastStore";
 
@@ -41,6 +42,12 @@ export function NotificationBell() {
     }
 
     track({ name: "signal_notification", count: created.length });
+    // Respect the user's master mute; the persistent feed still records, but
+    // interruptive toasts are suppressed (the granular stream policy lives in
+    // useEventStream).
+    if (!useNotificationPrefsStore.getState().enabled) {
+      return;
+    }
     created.slice(0, 3).forEach((notification) => {
       toast({
         tone: "info",
@@ -97,7 +104,11 @@ export function NotificationBell() {
         size="icon"
         variant="secondary"
       >
-        {unreadCount > 0 ? <BellRing className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+        {unreadCount > 0 ? (
+          <BellRing className="h-4 w-4 motion-safe:animate-pulse" />
+        ) : (
+          <Bell className="h-4 w-4" />
+        )}
         {unreadCount > 0 ? (
           <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--red)] px-1 text-[10px] font-semibold text-white">
             {unreadCount > 9 ? "9+" : unreadCount}
@@ -147,6 +158,14 @@ export function NotificationBell() {
               </p>
             )}
           </div>
+          <Link
+            className="flex items-center gap-2 border-t border-[var(--panel-border)] px-4 py-3 text-xs font-semibold text-[var(--muted)] transition-colors hover:bg-[#101722] hover:text-[#fff8df]"
+            href="/settings"
+            onClick={() => setOpen(false)}
+          >
+            <Settings className="h-3.5 w-3.5" />
+            Notification settings
+          </Link>
         </div>
       ) : null}
     </div>

@@ -14,6 +14,7 @@ import {
 import { notFound } from "next/navigation";
 
 import { SignalLevelMap } from "@/components/charts/SignalLevelMap";
+import { PositionSizeWidget } from "@/components/risk/PositionSizeWidget";
 import { ExpiryBadge } from "@/components/signals/ExpiryBadge";
 import { IndicatorsPanel } from "@/components/signals/IndicatorsPanel";
 import { ReasoningPanel } from "@/components/signals/ReasoningPanel";
@@ -189,6 +190,8 @@ export default async function SignalDetailPage({ params }: SignalDetailPageProps
                 )}
               </div>
             </div>
+
+            <PositionSizeWidget signal={signal} variant="detail" />
           </CardContent>
         </Card>
 

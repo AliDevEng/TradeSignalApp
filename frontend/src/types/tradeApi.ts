@@ -1,4 +1,38 @@
 export type ApiSignalDirection = "buy" | "sell" | "neutral";
+export type ApiTakeProfitProjection = {
+  price: string;
+  distance: string;
+  risk_reward: string;
+  profit_amount: string;
+};
+
+/** Wire mirror of the backend `PositionSizeResponse` (Decimal fields as strings). */
+export type ApiPositionSize = {
+  pair: string;
+  quote_currency: string;
+  contract_size: string;
+  min_lot: string;
+  lot_step: string;
+  requested_risk_amount: string;
+  stop_distance: string;
+  lots: string;
+  units: string;
+  risk_amount: string;
+  position_value: string;
+  pip_value: string;
+  take_profits: ApiTakeProfitProjection[];
+};
+
+/** Wire body for `POST /risk/position-size`. */
+export type ApiPositionSizeRequest = {
+  pair: string;
+  account_balance: number;
+  risk_percent: number;
+  entry: number;
+  stop_loss: number;
+  take_profits: number[];
+};
+
 export type ApiSignalType = "scalp" | "swing";
 export type ApiSignalOutcome =
   | "open"

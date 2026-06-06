@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { notificationForEvent, parseStreamEvent, queryKeysToInvalidate } from "@/lib/stream";
+import {
+  notificationForEvent,
+  parseStreamEvent,
+  queryKeysToInvalidate,
+  shouldSurfaceEvent,
+  type SurfacePrefs
+} from "@/lib/stream";
 import type { StreamEvent } from "@/types/stream";
 
 describe("parseStreamEvent", () => {
@@ -96,5 +102,80 @@ describe("notificationForEvent", () => {
 
   it("returns null when a signal id is missing", () => {
     expect(notificationForEvent(event("signal.created", { pair: "XAUUSD" }))).toBeNull();
+  });
+});
+
+describe("shouldSurfaceEvent", () => {
+  const prefs: SurfacePrefs = {
+    enabled: true,
+    minConfidence: 0.7,
+    styles: ["scalp", "swing"],
+    onlyActionable: true,
+    onSignalCreated: true,
+    onSignalClosed: true
+  };
+
+  it("suppresses everything when notifications are disabled", () => {
+    expect(
+      shouldSurfaceEvent(event("signal.created", { confidence: 0.9, should_trade: true }), {
+        ...prefs,
+        enabled: false
+      })
+    ).toBe(false);
+  });
+
+  it("admits an actionable, confident, in-style new signal", () => {
+    expect(
+      shouldSurfaceEvent(
+        event("signal.created", { confidence: 0.8, should_trade: true, signal_type: "scalp" }),
+        prefs
+      )
+    ).toBe(true);
+  });
+
+  it("filters out a signal below the minimum confidence", () => {
+    expect(
+      shouldSurfaceEvent(event("signal.created", { confidence: 0.5, should_trade: true }), prefs)
+    ).toBe(false);
+  });
+
+  it("filters out a non-actionable signal when only-actionable is set", () => {
+    expect(
+      shouldSurfaceEvent(event("signal.created", { confidence: 0.9, should_trade: false }), prefs)
+    ).toBe(false);
+  });
+
+  it("admits a non-actionable signal when only-actionable is off", () => {
+    expect(
+      shouldSurfaceEvent(event("signal.created", { confidence: 0.9, should_trade: false }), {
+        ...prefs,
+        onlyActionable: false
+      })
+    ).toBe(true);
+  });
+
+  it("filters out a muted style", () => {
+    expect(
+      shouldSurfaceEvent(
+        event("signal.created", { confidence: 0.9, should_trade: true, signal_type: "swing" }),
+        { ...prefs, styles: ["scalp"] }
+      )
+    ).toBe(false);
+  });
+
+  it("respects the per-event close toggle", () => {
+    const closed = event("signal.closed", { signal_type: "scalp", outcome: "hit_tp1" });
+    expect(shouldSurfaceEvent(closed, prefs)).toBe(true);
+    expect(shouldSurfaceEvent(closed, { ...prefs, onSignalClosed: false })).toBe(false);
+  });
+
+  it("never surfaces run.finished", () => {
+    expect(shouldSurfaceEvent(event("run.finished", { status: "success" }), prefs)).toBe(false);
+  });
+
+  it("fails open on confidence when the payload omits it", () => {
+    expect(
+      shouldSurfaceEvent(event("signal.created", { should_trade: true }), prefs)
+    ).toBe(true);
   });
 });

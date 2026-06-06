@@ -513,3 +513,79 @@ async def test_get_calendar_forwards_within_hours(client, calendar_ctrl):
 async def test_get_calendar_rejects_window_over_cap(client, calendar_ctrl):
     resp = await client.get("/api/v1/calendar?within_hours=999")
     assert resp.status_code == 422
+
+
+# ── POST /risk/position-size ─────────────────────────────────────────────────
+#
+# The risk controller is pure and stateless, so these drive the *real* controller
+# through the ASGI app (no override) — exercising request validation, the success
+# envelope, the 404 for an unknown instrument, and the money-as-string contract.
+
+
+async def test_position_size_returns_sized_position_in_envelope(client):
+    resp = await client.post(
+        "/api/v1/risk/position-size",
+        json={
+            "pair": "xauusd",
+            "account_balance": "10000",
+            "risk_percent": "1",
+            "entry": "2000",
+            "stop_loss": "1990",
+            "take_profits": ["2020", "2015"],
+        },
+    )
+    body = resp.json()
+
+    assert resp.status_code == 200
+    assert body["success"] is True
+    data = body["data"]
+    assert data["pair"] == "XAUUSD"
+    assert data["quote_currency"] == "USD"
+    # Money/quantities cross the wire as strings (never float for prices).
+    assert data["lots"] == "0.10"
+    assert data["risk_amount"] == "100.00"
+    assert data["take_profits"][0]["risk_reward"] == "2.00"
+    assert data["take_profits"][0]["profit_amount"] == "200.00"
+
+
+async def test_position_size_unknown_pair_is_404(client):
+    resp = await client.post(
+        "/api/v1/risk/position-size",
+        json={
+            "pair": "EURUSD",
+            "account_balance": "10000",
+            "risk_percent": "1",
+            "entry": "2000",
+            "stop_loss": "1990",
+        },
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_position_size_rejects_stop_equal_to_entry(client):
+    resp = await client.post(
+        "/api/v1/risk/position-size",
+        json={
+            "pair": "XAUUSD",
+            "account_balance": "10000",
+            "risk_percent": "1",
+            "entry": "2000",
+            "stop_loss": "2000",
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_position_size_rejects_nonpositive_balance(client):
+    resp = await client.post(
+        "/api/v1/risk/position-size",
+        json={
+            "pair": "XAUUSD",
+            "account_balance": "0",
+            "risk_percent": "1",
+            "entry": "2000",
+            "stop_loss": "1990",
+        },
+    )
+    assert resp.status_code == 422

@@ -63,6 +63,53 @@ export function queryKeysToInvalidate(type: StreamEventType): string[][] {
   }
 }
 
+/**
+ * The client-side surfacing policy — a pure mirror of the backend's
+ * `NotificationPreferences.should_notify` (see
+ * `backend/app/services/notifications/preferences.py`). It decides whether a
+ * stream event should raise an in-app toast + feed entry in *this* browser; it
+ * never affects cache invalidation, which always runs so views stay fresh.
+ */
+export type SurfacePrefs = {
+  enabled: boolean;
+  minConfidence: number;
+  styles: string[];
+  onlyActionable: boolean;
+  onSignalCreated: boolean;
+  onSignalClosed: boolean;
+};
+
+function styleAllowed(data: Record<string, unknown>, styles: string[]): boolean {
+  // Empty list = no style filter. A payload with no style is allowed through
+  // rather than silently dropped (matches the backend).
+  if (styles.length === 0) {
+    return true;
+  }
+  const style = data.signal_type;
+  return typeof style !== "string" || styles.includes(style);
+}
+
+export function shouldSurfaceEvent(event: StreamEvent, prefs: SurfacePrefs): boolean {
+  if (!prefs.enabled) {
+    return false;
+  }
+  const data = event.data;
+  if (event.type === "signal.created") {
+    if (!prefs.onSignalCreated || !styleAllowed(data, prefs.styles)) {
+      return false;
+    }
+    if (prefs.onlyActionable && data.should_trade === false) {
+      return false;
+    }
+    // No confidence on the payload → don't gate on it (fail open for the flag).
+    return typeof data.confidence === "number" ? data.confidence >= prefs.minConfidence : true;
+  }
+  if (event.type === "signal.closed") {
+    return prefs.onSignalClosed && styleAllowed(data, prefs.styles);
+  }
+  return false;
+}
+
 export type StreamNotification = {
   notification: AppNotification;
   tone: ToastTone;

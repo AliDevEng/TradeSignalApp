@@ -22,6 +22,7 @@ from app.controllers import (
     CalendarController,
     PairController,
     PerformanceController,
+    RiskController,
     SignalController,
 )
 from app.database import Database
@@ -169,6 +170,19 @@ def get_performance_controller(
 
 
 PerformanceControllerDep = Annotated[PerformanceController, Depends(get_performance_controller)]
+
+
+def get_risk_controller() -> RiskController:
+    """Construct the stateless risk controller.
+
+    It owns no session and no app-state collaborators — position sizing is a pure
+    calculation over the request body and an in-code contract spec — so the
+    factory takes no dependencies.
+    """
+    return RiskController()
+
+
+RiskControllerDep = Annotated[RiskController, Depends(get_risk_controller)]
 
 
 # ── Iteration-3 services (resolved off app state) ────────────────────────────

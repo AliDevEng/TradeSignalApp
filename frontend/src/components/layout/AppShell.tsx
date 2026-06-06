@@ -13,6 +13,7 @@ import {
   LineChart,
   Menu,
   Radar,
+  Settings,
   ShieldCheck
 } from "lucide-react";
 
@@ -38,7 +39,8 @@ const navigationItems = [
   { label: "Analysis", href: "/analysis", icon: BarChart3 },
   { label: "Closed", href: "/closed", icon: CircleCheckBig },
   { label: "Performance", href: "/performance", icon: LineChart },
-  { label: "Risk", href: "/signals?status=active&sort=confidence", icon: ShieldCheck }
+  { label: "Risk", href: "/signals?status=active&sort=confidence", icon: ShieldCheck },
+  { label: "Settings", href: "/settings", icon: Settings }
 ] as const;
 
 function isActiveRoute(pathname: string, href: string): boolean {

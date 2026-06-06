@@ -23,6 +23,7 @@ from app.controllers.outcome_controller import OutcomeController, OutcomeRunSumm
 from app.controllers.pair_controller import PairController
 from app.controllers.performance_controller import PerformanceController
 from app.controllers.results import Page
+from app.controllers.risk_controller import RiskController
 from app.controllers.signal_controller import SignalController
 
 __all__ = [
@@ -36,5 +37,6 @@ __all__ = [
     "PairController",
     "PerformanceController",
     "ResourceNotFoundError",
+    "RiskController",
     "SignalController",
 ]

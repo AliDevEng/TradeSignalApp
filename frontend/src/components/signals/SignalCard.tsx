@@ -8,6 +8,7 @@ import {
   SignalStatusBadge,
   TradeStyleBadge
 } from "@/components/signals/SignalBadge";
+import { PositionSizeWidget } from "@/components/risk/PositionSizeWidget";
 import { Card } from "@/components/ui/Card";
 import {
   formatPercent,
@@ -154,6 +155,10 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
             ) : (
               <p className="mt-2 text-lg font-semibold text-[#7bea9b]">Pending</p>
             )}
+          </div>
+
+          <div className="mt-2">
+            <PositionSizeWidget signal={signal} variant="card" />
           </div>
         </div>
       </div>

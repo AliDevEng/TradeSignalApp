@@ -11,6 +11,7 @@ import {
   type LucideIcon,
   PlayCircle,
   Search,
+  Settings,
   TrendingUp
 } from "lucide-react";
 
@@ -129,6 +130,15 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
         icon: LineChart,
         keywords: "performance track record equity curve calibration win rate",
         run: navigate("/performance")
+      },
+      {
+        id: "nav-settings",
+        label: "Settings",
+        hint: "Notifications",
+        group: "Actions",
+        icon: Settings,
+        keywords: "settings notifications preferences telegram alerts",
+        run: navigate("/settings")
       },
       {
         id: "action-trigger",

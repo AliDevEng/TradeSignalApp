@@ -236,14 +236,17 @@ Goal: push updates instead of being polled, and deliver signals off-platform.
   enabled/not_configured/down like the existing provider components. Off by default
   (`NOTIFICATIONS_ENABLED=false`) — the null notifier, so the path is inert.
 
-### Iteration 12 - Risk & Position Sizing (10 points)
+### Iteration 12 - Risk & Position Sizing (10 points) ✅ DONE
 Goal: turn a signal into an exact, account-aware trade.
-- [ ] (4) Pure `services/risk/position_sizing.py`: given account balance, risk %,
+- [x] (4) Pure `services/risk/position_sizing.py`: given account balance, risk %,
   entry, SL and the instrument's contract spec, compute position size, risk amount,
-  and R:R to each TP. No IO, unit-tested.
-- [ ] (3) `POST /api/v1/risk/position-size` — stateless; no account data is stored.
-- [ ] (3) Per-instrument contract metadata (pip value, min lot, contract size) for
-  XAUUSD, carried on `Pair` (or a small spec lookup).
+  and R:R to each TP. No IO, unit-tested. Lots round **down** to the lot step so
+  rounding can only reduce risk, never exceed the budget.
+- [x] (3) `POST /api/v1/risk/position-size` — stateless; no account data is stored.
+- [x] (3) Per-instrument contract metadata (pip value, min lot, contract size) for
+  XAUUSD, via a small in-code spec lookup (`services/risk/contracts.py`) behind a
+  `get_contract_spec` seam — no migration for a single instrument, promotable onto
+  `Pair` later behind the same seam.
 
 **Subtotal (Iterations 6-12): 118 points**
 
@@ -663,6 +666,7 @@ swappable and the logic framework-free).
 | `GET /api/v1/performance` | `PerformanceController.get_performance` | `APIResponse[PerformanceResponse]` — `?pair=`/`?signal_type=`/`?from=`/`?to=` filters |
 | `GET /api/v1/calendar` | `CalendarController.get_upcoming` | `APIResponse[CalendarResponse]` — upcoming high-impact events; `?within_hours=` (1..168, default 24) |
 | `GET /api/v1/stream` | `EventBus` (via the SSE view) | `text/event-stream` — live `signal.created`/`signal.closed`/`run.finished` events; `Last-Event-ID` header (or `?last_event_id=`) resumes |
+| `POST /api/v1/risk/position-size` | `RiskController.size_position` | `APIResponse[PositionSizeResponse]` — stateless sizing (lots, real risk, R:R + profit per TP); `404` for an unknown instrument |
 
 Two read controllers were added so the pairs and analysis routers stay
 layering-compliant: `PairController` (pairs are small and enumerable, so its
@@ -984,6 +988,40 @@ the notifier is the null one and no dispatcher runs; the event bus is always
 constructed (cheap, inert without subscribers) so `GET /api/v1/stream` always
 works — it simply has nothing to push until a run completes.
 
+### Risk & position sizing (Iteration 12 deliverable)
+
+This turns a signal into an **exact, account-aware order**, and like the other
+calculation services it is pure and IO-free — so the endpoint built on it is
+stateless and stores no account data.
+
+**Contract metadata** (`services/risk/contracts.py`). A small in-code
+`ContractSpec` lookup (`get_contract_spec`) holds what sizing needs that the
+signal can't supply: how a price move maps to money. For XAUUSD: a 100-oz standard
+lot (so a $1 move is $100/lot), a 0.01 min lot / lot step, a $0.01 pip, and USD as
+the quote currency. Adding columns + a migration to `pairs` for a single
+instrument wasn't worth it; the lookup sits behind a seam it can be promoted onto
+later without the controller changing. An unknown symbol returns `None` (the
+controller raises the standard `ResourceNotFoundError` → 404) rather than guessing
+a spec and mis-sizing.
+
+**Sizer** (`services/risk/position_sizing.py`). A pure `compute_position_size`:
+given balance, risk %, entry, stop and the spec, it returns the lot size whose
+loss at the stop is at most the risk budget, plus units, real risk, notional,
+per-pip value, and the R:R + projected profit to each take-profit. Two safety
+properties are baked in and unit-tested: **lots round down** to the lot step (so
+rounding can only ever risk *less*, and a trade too small to place rounds to zero
+rather than over-risking), and `Decimal` is used throughout (never float for money
+or prices). Distances are absolute, so the same maths serves long and short. The
+P&L-in-quote-currency = account-currency assumption (true for XAUUSD→USD) is
+documented; a cross-currency account is a future FX-factor extension, not silently
+wrong.
+
+**Controller + endpoint.** `RiskController` is the thinnest in the project — no
+session, no repositories: resolve the spec, run the sizer, map value objects onto
+the wire schema. `POST /api/v1/risk/position-size` validates the body at the edge
+(positive balance/risk/prices, `stop ≠ entry` → 422), wraps the result in the
+shared envelope, and persists nothing.
+
 ## 🧪 Run
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -1017,17 +1055,17 @@ ruff format --check .
 pyright
 ```
 
-### ✅ Verification status (Iterations 1–11)
+### ✅ Verification status (Iterations 1–12)
 Last verified on 2026-06-06:
-- `pytest` — **514 passed** (453 through Iteration 10, then Iteration 11's event
-  bus (ids/replay/fan-out/slow-consumer-drop), notifications (pure preferences +
-  rendering, `NullNotifier`, `TelegramNotifier` via `httpx.MockTransport`, the
-  dispatcher end-to-end over the bus), the SSE streaming loop (replay → heartbeat →
-  live → reconnect) + route response, the new streaming/notification config
-  validation, the `notifications` health component, the controller post-commit
-  event-publish tests, and the lifespan event-bus/dispatcher wiring)
+- `pytest` — **531 passed** (514 through Iteration 11, then Iteration 12's pure
+  position sizer (clean size, short via absolute distances, round-down-keeps-risk,
+  unaffordable→zero-lots, invalid-input guards), the contract-spec lookup
+  (case-insensitivity, unknown→`None`, derived pip value), the `RiskController`
+  mapping + unknown-pair 404, and the `POST /risk/position-size` route tests
+  (success envelope, money-as-strings, 404, and the 422s for `stop == entry` and a
+  non-positive balance))
 - `ruff check .` — clean
-- `ruff format --check .` — clean (128 files)
+- `ruff format --check .` — clean (135 files)
 - `alembic upgrade head --sql` renders cleanly through `0006_signal_quality`
   (single linear head); the new quality-gate columns carry their convention names
   (`ck_signals_quality_score_in_unit_interval`, `ix_signals_should_trade`) and

@@ -2,7 +2,10 @@
 
 import { useEffect } from "react";
 
+import { useAccountStore } from "@/store/accountStore";
+import { useNotificationPrefsStore } from "@/store/notificationPrefsStore";
 import { useNotificationStore } from "@/store/notificationStore";
+import { useTelegramStore } from "@/store/telegramStore";
 import { useUIStore } from "@/store/uiStore";
 
 /**
@@ -14,6 +17,9 @@ export function StoreHydration() {
   useEffect(() => {
     void useUIStore.persist.rehydrate();
     void useNotificationStore.persist.rehydrate();
+    void useNotificationPrefsStore.persist.rehydrate();
+    void useTelegramStore.persist.rehydrate();
+    void useAccountStore.persist.rehydrate();
   }, []);
 
   return null;

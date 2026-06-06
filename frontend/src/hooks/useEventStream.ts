@@ -4,9 +4,15 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { env, STREAM_ENABLED } from "@/lib/env";
-import { notificationForEvent, parseStreamEvent, queryKeysToInvalidate } from "@/lib/stream";
+import {
+  notificationForEvent,
+  parseStreamEvent,
+  queryKeysToInvalidate,
+  shouldSurfaceEvent
+} from "@/lib/stream";
 import { track } from "@/lib/analytics";
 import { useNotificationStore } from "@/store/notificationStore";
+import { useNotificationPrefsStore } from "@/store/notificationPrefsStore";
 import { toast } from "@/store/toastStore";
 import { STREAM_EVENT_TYPES, type StreamStatus } from "@/types/stream";
 
@@ -65,8 +71,14 @@ export function useEventStream(): StreamStatus {
       if (!event) {
         return;
       }
+      // Cache invalidation always runs so views stay fresh, even when the user
+      // has muted notifications.
       for (const queryKey of queryKeysToInvalidate(event.type)) {
         void queryClient.invalidateQueries({ queryKey });
+      }
+      // Read prefs imperatively so changing them never re-opens the stream.
+      if (!shouldSurfaceEvent(event, useNotificationPrefsStore.getState())) {
+        return;
       }
       const mapped = notificationForEvent(event);
       if (!mapped) {
