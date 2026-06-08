@@ -8,7 +8,7 @@ import {
   SignalStatusBadge,
   TradeStyleBadge
 } from "@/components/signals/SignalBadge";
-import { PositionSizeWidget } from "@/components/risk/PositionSizeWidget";
+import { LiveLotSize } from "@/components/risk/LiveLotSize";
 import { ConfidenceCalibrationHint } from "@/components/signals/ConfidenceCalibrationHint";
 import { Card } from "@/components/ui/Card";
 import {
@@ -161,7 +161,7 @@ export const SignalCard = memo(function SignalCard({ signal, density }: SignalCa
           </div>
 
           <div className="mt-2">
-            <PositionSizeWidget signal={signal} variant="card" />
+            <LiveLotSize signal={signal} variant="inline" />
           </div>
         </div>
       </div>

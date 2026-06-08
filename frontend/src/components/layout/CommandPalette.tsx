@@ -11,6 +11,7 @@ import {
   type LucideIcon,
   PlayCircle,
   Search,
+  ServerCog,
   Settings,
   TrendingUp
 } from "lucide-react";
@@ -132,12 +133,21 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
         run: navigate("/performance")
       },
       {
+        id: "nav-system",
+        label: "System & status",
+        hint: "Health",
+        group: "Actions",
+        icon: ServerCog,
+        keywords: "system status health backend pipeline api uptime",
+        run: navigate("/system")
+      },
+      {
         id: "nav-settings",
         label: "Settings",
         hint: "Notifications",
         group: "Actions",
         icon: Settings,
-        keywords: "settings notifications preferences telegram alerts",
+        keywords: "settings notifications preferences telegram alerts account balance risk",
         run: navigate("/settings")
       },
       {

@@ -11,14 +11,15 @@ import {
   Command,
   Gauge,
   LineChart,
-  Menu,
   Radar,
   Settings,
-  ShieldCheck
+  ServerCog
 } from "lucide-react";
 
+import { AccountBalancePill } from "@/components/layout/AccountBalancePill";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { LiveIndicator } from "@/components/layout/LiveIndicator";
+import { NextScanChip } from "@/components/layout/NextScanChip";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { StoreHydration } from "@/components/layout/StoreHydration";
 import { Toaster } from "@/components/feedback/Toaster";
@@ -33,15 +34,22 @@ type AppShellProps = Readonly<{
   children: React.ReactNode;
 }>;
 
-const navigationItems = [
+// Primary destinations shown in the top bar. Utility routes (System, Settings)
+// live as icons on the right so the bar stays decision-focused.
+const primaryNav = [
   { label: "Dashboard", href: "/dashboard", icon: Gauge },
   { label: "Signals", href: "/signals", icon: Activity },
   { label: "Analysis", href: "/analysis", icon: BarChart3 },
   { label: "Closed", href: "/closed", icon: CircleCheckBig },
-  { label: "Performance", href: "/performance", icon: LineChart },
-  { label: "Risk", href: "/signals?status=active&sort=confidence", icon: ShieldCheck },
+  { label: "Performance", href: "/performance", icon: LineChart }
+] as const;
+
+const utilityNav = [
+  { label: "System", href: "/system", icon: ServerCog },
   { label: "Settings", href: "/settings", icon: Settings }
 ] as const;
+
+const mobileNav = [...primaryNav, ...utilityNav];
 
 function isActiveRoute(pathname: string, href: string): boolean {
   const route = href.split("?")[0];
@@ -114,7 +122,10 @@ export function AppShell({ children }: AppShellProps) {
   }, [pathname, setLastPath]);
 
   return (
-    <div className="min-h-dvh overflow-x-hidden bg-[var(--background)]">
+    // `overflow-x-clip` (not `-hidden`) keeps horizontal overflow contained
+    // WITHOUT making this element a scroll container — which would silently break
+    // `position: sticky` on the header below it.
+    <div className="min-h-dvh overflow-x-clip bg-[var(--background)]">
       <a
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:border focus:border-[var(--gold)] focus:bg-[#0d131c] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[#fff8df]"
         href="#main-content"
@@ -122,7 +133,7 @@ export function AppShell({ children }: AppShellProps) {
         Skip to content
       </a>
       <header className="sticky top-0 z-30 border-b border-[#253047] bg-[rgba(9,11,16,0.92)] shadow-[0_16px_40px_rgba(0,0,0,0.24)] backdrop-blur-xl">
-        <div className="mx-auto flex min-h-16 w-full max-w-[1480px] items-center justify-between gap-3 px-3 sm:px-5">
+        <div className="mx-auto flex min-h-16 w-full max-w-[1560px] items-center justify-between gap-3 px-3 sm:px-6">
           <Link className="flex min-w-0 items-center gap-3" href="/dashboard">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#6f5620] bg-[#151006] text-[var(--gold-strong)] shadow-[0_0_24px_rgba(216,175,79,0.16)]">
               <Radar className="h-5 w-5" />
@@ -136,7 +147,7 @@ export function AppShell({ children }: AppShellProps) {
           </Link>
 
           <nav className="hidden items-center rounded-lg border border-[#293244] bg-[#101722] p-1 lg:flex">
-            {navigationItems.slice(0, 5).map((item) => {
+            {primaryNav.map((item) => {
               const Icon = item.icon;
               const isActive = isActiveRoute(pathname, item.href);
 
@@ -160,25 +171,41 @@ export function AppShell({ children }: AppShellProps) {
           </nav>
 
           <div className="flex items-center gap-2">
+            <NextScanChip />
+            <AccountBalancePill />
+            <Link
+              aria-label="System status"
+              className="hidden sm:inline-flex"
+              href="/system"
+              title="Backend & system status"
+            >
+              <LiveIndicator status={streamStatus} />
+            </Link>
             <Button
               aria-label="Open command palette"
               className="gap-2"
               onClick={toggleCommandPalette}
+              size="icon"
               variant="secondary"
             >
               <Command className="h-4 w-4" />
-              <span className="hidden text-xs text-[var(--muted)] sm:inline">Ctrl K</span>
             </Button>
-            <LiveIndicator status={streamStatus} />
+            <Link
+              aria-label="Settings"
+              className="hidden h-10 w-10 items-center justify-center rounded-lg border border-[var(--panel-border)] bg-[#111722] text-[var(--muted)] transition-colors hover:border-[#4d5c73] hover:text-[#fff8df] sm:inline-flex"
+              href="/settings"
+            >
+              <Settings className="h-4 w-4" />
+            </Link>
             <NotificationBell />
           </div>
         </div>
 
         <nav
           aria-label="Primary"
-          className="mx-auto flex w-full max-w-[1480px] gap-2 overflow-x-auto px-3 pb-3 sm:px-5 lg:hidden"
+          className="mx-auto flex w-full max-w-[1560px] gap-2 overflow-x-auto px-3 pb-3 sm:px-6 lg:hidden"
         >
-          {navigationItems.map((item) => {
+          {mobileNav.map((item) => {
             const Icon = item.icon;
             const isActive = isActiveRoute(pathname, item.href);
 
@@ -202,46 +229,14 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       </header>
 
-      <div className="mx-auto grid w-full max-w-[1480px] gap-5 px-3 py-5 sm:px-5 xl:grid-cols-[220px_minmax(0,1fr)]">
-        <aside className="hidden xl:block">
-          <div className="sticky top-24 space-y-3">
-            <div className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel)] p-3 shadow-[var(--surface-shadow)]">
-              <div className="mb-3 flex items-center gap-2 px-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                <Menu className="h-4 w-4 text-[var(--gold)]" />
-                Workspace
-              </div>
-              <nav className="space-y-1" aria-label="Primary">
-                {navigationItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = isActiveRoute(pathname, item.href);
-
-                  return (
-                    <Link
-                      aria-current={isActive ? "page" : undefined}
-                      className={cn(
-                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold transition-colors",
-                        isActive
-                          ? "bg-[#201a0d] text-[var(--gold-strong)]"
-                          : "text-[#a5afbf] hover:bg-[#182132] hover:text-[#fff8df]"
-                      )}
-                      href={item.href}
-                      key={item.href}
-                    >
-                      <Icon aria-hidden className="h-4 w-4" />
-                      {item.label}
-                    </Link>
-                  );
-                })}
-              </nav>
-            </div>
-          </div>
-        </aside>
-
-        <main className="min-w-0 space-y-5" id="main-content" tabIndex={-1}>
-          <Breadcrumbs pathname={pathname} />
-          {children}
-        </main>
-      </div>
+      <main
+        className="mx-auto w-full max-w-[1560px] space-y-5 px-3 py-5 sm:px-6"
+        id="main-content"
+        tabIndex={-1}
+      >
+        <Breadcrumbs pathname={pathname} />
+        {children}
+      </main>
 
       <StoreHydration />
       <CommandPalette />
