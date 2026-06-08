@@ -67,6 +67,7 @@ def build_ai_provider(settings: Settings) -> AIProvider:
         "temperature": settings.ai_temperature,
         "max_tokens": settings.ai_max_tokens,
         "timeout_seconds": settings.ai_timeout_seconds,
+        "prompt_candle_window": settings.ai_prompt_candle_window,
     }
     match settings.ai_provider:
         case "groq":

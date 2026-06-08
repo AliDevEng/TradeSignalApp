@@ -47,12 +47,25 @@ SignalDirection = Literal["buy", "sell", "neutral"]
 MAX_TAKE_PROFITS: Final[int] = 3
 # Cap on the self-reported risk/trap notes a signal may carry.
 MAX_RISKS: Final[int] = 5
-# Most recent candles included in the prompt. Enough for the model to see
-# near-term price action without blowing the token budget on ancient bars the
-# indicators already summarise.
-_PROMPT_CANDLE_WINDOW: Final[int] = 30
+# Default count of recent candles per timeframe in the prompt. Enough for the
+# model to see near-term price action without blowing the token budget on
+# ancient bars the indicators already summarise. Overridable per instance (via
+# the provider constructor / ``ai_prompt_candle_window`` setting) so the budget
+# can be tuned to the provider tier — e.g. trimmed to fit a free tier's
+# tokens-per-minute cap, widened on a paid one.
+_DEFAULT_PROMPT_CANDLE_WINDOW: Final[int] = 20
 
 _JSON_FENCE_RE: Final[re.Pattern[str]] = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def _compact_json(value: Any) -> str:
+    """Serialise to JSON with no whitespace — indentation is pure wasted tokens.
+
+    The model parses compact JSON identically to a pretty-printed block, so the
+    indent/newlines an LLM never needs are dropped before the prompt is metered
+    against the provider's token budget.
+    """
+    return json.dumps(value, separators=(",", ":"), default=str)
 
 # Persona/method/risk-rules live in an editable Markdown file next to this
 # module so prompt engineering can iterate without code changes; the strict
@@ -343,6 +356,11 @@ class BaseAIProvider(AIProvider):
     identical across providers.
     """
 
+    #: Recent candles per timeframe included in the prompt. A class default so a
+    #: provider that doesn't set it (and the test fakes) still works; concrete
+    #: providers override it per instance from settings.
+    _prompt_candle_window: int = _DEFAULT_PROMPT_CANDLE_WINDOW
+
     async def analyze(self, context: AnalysisContext) -> AnalysisResult:
         system = self._build_system_prompt()
         user = self._build_user_prompt(context)
@@ -439,9 +457,9 @@ class BaseAIProvider(AIProvider):
             structure = self._render_structure(view.structure)
             blocks.append(
                 f"=== Timeframe: {view.timeframe}{role}{primary} ===\n"
-                f"Indicators (latest):\n{json.dumps(ind, indent=2, default=str)}\n"
+                f"Indicators (latest):\n{_compact_json(ind)}\n"
                 f"{structure}\n"
-                f"Recent candles (oldest first, up to {_PROMPT_CANDLE_WINDOW}):\n{candles}"
+                f"Recent candles (oldest first, up to {self._prompt_candle_window}):\n{candles}"
             )
         order = ", ".join(v.timeframe for v in views)
         framing = self._render_framing(context)
@@ -473,9 +491,7 @@ class BaseAIProvider(AIProvider):
         if structure is None or structure.is_empty:
             return ""
         levels = structure.to_dict()
-        return "Structure (computed — anchor levels to these):\n" + json.dumps(
-            levels, indent=2, default=str
-        )
+        return "Structure (computed — anchor levels to these):\n" + _compact_json(levels)
 
     @staticmethod
     def _render_news(context: AnalysisContext) -> str:
@@ -594,13 +610,17 @@ class BaseAIProvider(AIProvider):
 
     @staticmethod
     def _round_indicators(indicators: dict[str, Any]) -> dict[str, Any]:
-        """Trim indicator floats before they reach the model.
+        """Trim indicator floats — and drop unset ones — before the model sees them.
 
         Indicator values carry full float precision (e.g. RSI 33.04176178), and
         the model tends to quote them verbatim in its rationale. Rounding here
         keeps cited numbers readable. Human-scale values (RSI, MACD/EMA on gold,
         prices) are capped at 2 decimals; sub-unit values (ATR/MACD on FX,
         ``bb_percent``) keep more precision so they don't collapse to ``0.0``.
+
+        ``None`` fields (indicators not yet available early in a series) are
+        omitted entirely: an absent key reads the same as a ``null`` to the model
+        but costs no tokens, which matters against a provider's per-request budget.
         """
 
         def _round(value: Any) -> Any:
@@ -608,11 +628,10 @@ class BaseAIProvider(AIProvider):
                 return round(value, 2) if abs(value) >= 1 else round(value, 6)
             return value
 
-        return {key: _round(value) for key, value in indicators.items()}
+        return {key: _round(value) for key, value in indicators.items() if value is not None}
 
-    @staticmethod
-    def _render_candles(candles: list[Candle]) -> str:
-        window = candles[-_PROMPT_CANDLE_WINDOW:]
+    def _render_candles(self, candles: list[Candle]) -> str:
+        window = candles[-self._prompt_candle_window :]
         lines = [
             f"{c.timestamp.isoformat()} O:{c.open} H:{c.high} L:{c.low} C:{c.close}" for c in window
         ]

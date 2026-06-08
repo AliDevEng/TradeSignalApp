@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     # Per-request budget. A hung provider must never stall an analysis cycle
     # past this; the cycle records the failure and moves on.
     ai_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
+    # Recent candles per timeframe included in each analysis prompt. The dominant
+    # lever on prompt size: with several timeframes per pair, the prompt is metered
+    # (prompt + ``ai_max_tokens``) against the provider's per-request token budget —
+    # Groq's free tier caps this at 12k tokens/min, so a wide window there fails the
+    # call outright. The default keeps near-term price action visible while staying
+    # under that cap (indicators/structure already summarise older bars); raise it on
+    # a higher tier for more context.
+    ai_prompt_candle_window: int = Field(default=20, ge=5, le=200)
 
     # ── Market Data ────────────────────────────────────────────────────────
     market_data_provider: MarketDataProvider = "twelve_data"

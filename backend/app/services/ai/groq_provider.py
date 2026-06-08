@@ -11,6 +11,7 @@ from __future__ import annotations
 import groq
 
 from app.services.ai.base import (
+    _DEFAULT_PROMPT_CANDLE_WINDOW,
     AIRequestError,
     BaseAIProvider,
     CompletionResult,
@@ -29,11 +30,13 @@ class GroqProvider(BaseAIProvider):
         temperature: float = 0.2,
         max_tokens: int = 1024,
         timeout_seconds: float = 30.0,
+        prompt_candle_window: int = _DEFAULT_PROMPT_CANDLE_WINDOW,
         client: groq.AsyncGroq | None = None,
     ) -> None:
         self.model = model
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._prompt_candle_window = prompt_candle_window
         self._owns_client = client is None
         # The SDK retries network blips internally; we add our own typed error
         # boundary on top so callers never see a raw ``groq.*`` exception.

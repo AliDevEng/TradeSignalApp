@@ -20,6 +20,7 @@ from typing import Any, Final
 import anthropic
 
 from app.services.ai.base import (
+    _DEFAULT_PROMPT_CANDLE_WINDOW,
     AIRequestError,
     AIResponseError,
     BaseAIProvider,
@@ -44,11 +45,13 @@ class AnthropicProvider(BaseAIProvider):
         temperature: float = 0.2,
         max_tokens: int = 1024,
         timeout_seconds: float = 30.0,
+        prompt_candle_window: int = _DEFAULT_PROMPT_CANDLE_WINDOW,
         client: anthropic.AsyncAnthropic | None = None,
     ) -> None:
         self.model = model
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._prompt_candle_window = prompt_candle_window
         self._owns_client = client is None
         self._client = client or anthropic.AsyncAnthropic(api_key=api_key, timeout=timeout_seconds)
 
