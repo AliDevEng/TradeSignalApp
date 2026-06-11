@@ -50,7 +50,19 @@ logger = logging.getLogger(__name__)
 #: The closed vocabulary of domain events. A ``Literal`` (not a free string) so a
 #: typo in a ``publish`` call is a type error and the frontend can switch on a
 #: known set.
-EventType = Literal["signal.created", "signal.closed", "run.finished"]
+#:
+#: ``run.started``/``run.progress`` narrate a pipeline cycle *while it runs* so the
+#: UI can show the otherwise-invisible background workflow (fetching → analysing →
+#: scoring). They are high-frequency and *transient* — only the live view cares —
+#: so they are published with ``buffer=False`` (kept out of the replay ring), while
+#: the durable ``signal.*``/``run.finished`` events are buffered for resume.
+EventType = Literal[
+    "signal.created",
+    "signal.closed",
+    "run.started",
+    "run.progress",
+    "run.finished",
+]
 
 #: SSE field terminator: a single record ends with a blank line.
 _SSE_TERMINATOR: Final[str] = "\n\n"
@@ -123,8 +135,13 @@ class EventPublisher(abc.ABC):
     """
 
     @abc.abstractmethod
-    def publish(self, event_type: EventType, data: dict[str, Any]) -> Event:
-        """Publish an event and return the stamped :class:`Event`."""
+    def publish(self, event_type: EventType, data: dict[str, Any], *, buffer: bool = True) -> Event:
+        """Publish an event and return the stamped :class:`Event`.
+
+        ``buffer=False`` fans the event out to live subscribers but keeps it out
+        of the replay ring — the right choice for transient progress chatter a
+        reconnecting client should not be re-told.
+        """
 
 
 class NullEventBus(EventPublisher):
@@ -134,7 +151,7 @@ class NullEventBus(EventPublisher):
     keeps publishing a guaranteed no-op cost where streaming is irrelevant.
     """
 
-    def publish(self, event_type: EventType, data: dict[str, Any]) -> Event:
+    def publish(self, event_type: EventType, data: dict[str, Any], *, buffer: bool = True) -> Event:
         return Event(id=0, type=event_type, at=datetime.now(UTC), data=data)
 
 
@@ -159,11 +176,17 @@ class EventBus(EventPublisher):
 
     # ── Producer side ────────────────────────────────────────────────────────
 
-    def publish(self, event_type: EventType, data: dict[str, Any]) -> Event:
-        """Stamp, buffer, and fan an event out to every subscriber. Never blocks."""
+    def publish(self, event_type: EventType, data: dict[str, Any], *, buffer: bool = True) -> Event:
+        """Stamp, (optionally) buffer, and fan an event out to subscribers. Never blocks.
+
+        ``buffer=False`` skips the replay ring so transient progress events don't
+        evict the durable ``signal.*``/``run.finished`` events a reconnecting
+        client genuinely needs to resume — the live subscribers still receive it.
+        """
         self._seq += 1
         event = Event(id=self._seq, type=event_type, at=datetime.now(UTC), data=data)
-        self._recent.append(event)
+        if buffer:
+            self._recent.append(event)
         for sub in self._subscribers:
             try:
                 sub.queue.put_nowait(event)

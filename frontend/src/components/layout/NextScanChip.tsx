@@ -5,6 +5,8 @@ import { Loader2, Radar } from "lucide-react";
 import { useNow } from "@/hooks/useNow";
 import { usePipelineStatusQuery } from "@/hooks/useTradeQueries";
 import { formatCountdown } from "@/lib/formatters";
+import { usePipelineProgressStore } from "@/store/pipelineProgressStore";
+import { PROGRESS_PHASE_LABELS } from "@/types/stream";
 
 /**
  * Compact, always-visible scan status for the command bar: a spinner while a scan
@@ -15,17 +17,21 @@ import { formatCountdown } from "@/lib/formatters";
  */
 export function NextScanChip() {
   const { data } = usePipelineStatusQuery();
+  const progress = usePipelineProgressStore((state) => state.progress);
   const now = useNow(1_000);
 
   if (!data || data.state === "disabled") {
     return null;
   }
 
-  if (data.state === "running") {
+  // A live progress snapshot means a run is in flight even before the poll catches
+  // up; show the current phase label so the chip narrates the workflow.
+  if (data.state === "running" || progress !== null) {
+    const phaseLabel = progress?.phase ? PROGRESS_PHASE_LABELS[progress.phase] : "Scanning…";
     return (
       <span className="hidden h-9 items-center gap-2 rounded-md border border-[#6f5620] bg-[#191407] px-2.5 text-xs font-semibold text-[var(--gold-strong)] md:inline-flex">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Scanning…
+        {phaseLabel}
       </span>
     );
   }

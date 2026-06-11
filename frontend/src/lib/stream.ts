@@ -7,7 +7,14 @@
 
 import type { AppNotification } from "@/store/notificationStore";
 import type { ToastTone } from "@/store/toastStore";
-import { STREAM_EVENT_TYPES, type StreamEvent, type StreamEventType } from "@/types/stream";
+import {
+  PROGRESS_PHASES,
+  STREAM_EVENT_TYPES,
+  type PipelineProgress,
+  type ProgressPhase,
+  type StreamEvent,
+  type StreamEventType
+} from "@/types/stream";
 
 const EVENT_TYPES = new Set<string>(STREAM_EVENT_TYPES);
 
@@ -56,11 +63,58 @@ export function queryKeysToInvalidate(type: StreamEventType): string[][] {
       return [["signals"], ["pipeline-status"]];
     case "signal.closed":
       return [["signals"], ["performance"]];
+    // A run starting flips the polled status to "running" immediately rather than
+    // waiting for the next poll, so the banner reacts the instant a cycle begins.
+    case "run.started":
+      return [["pipeline-status"]];
     case "run.finished":
       return [["signals"], ["analysis-runs"], ["pipeline-status"]];
+    // `run.progress` is purely store-driven (no query owns the phase), so it
+    // triggers no refetch — the live stepper reads the progress store directly.
     default:
       return [];
   }
+}
+
+const PHASE_SET = new Set<string>(PROGRESS_PHASES);
+
+function num(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function optionalStr(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * Project a `run.started` / `run.progress` event into a {@link PipelineProgress}
+ * snapshot for the progress store, or `null` for any other event (or a frame with
+ * no run id). Pure and defensive against a partial payload, so a single odd frame
+ * can never break the live stepper.
+ */
+export function progressFromEvent(event: StreamEvent): PipelineProgress | null {
+  if (event.type !== "run.started" && event.type !== "run.progress") {
+    return null;
+  }
+  const data = event.data;
+  const runId = optionalStr(data.run_id);
+  if (!runId) {
+    return null;
+  }
+  const rawPhase = data.phase;
+  const phase: ProgressPhase | null =
+    typeof rawPhase === "string" && PHASE_SET.has(rawPhase) ? (rawPhase as ProgressPhase) : null;
+  return {
+    runId,
+    phase,
+    message: str(data.message, event.type === "run.started" ? "Starting analysis…" : ""),
+    pair: optionalStr(data.pair),
+    pairsTotal: num(data.pairs_total, 0),
+    pairsCompleted: num(data.pairs_completed, 0),
+    step: typeof data.step === "number" ? data.step : null,
+    stepsTotal: typeof data.steps_total === "number" ? data.steps_total : null,
+    updatedAt: Date.now()
+  };
 }
 
 /**

@@ -63,6 +63,31 @@ def test_replay_since_returns_only_newer_events():
     assert bus.replay_since(e3.id) == []
 
 
+async def test_unbuffered_event_reaches_subscribers_but_skips_replay():
+    """``buffer=False`` (transient progress) fans out live but isn't replayed.
+
+    A reconnecting client must resume on durable events (signals, run.finished),
+    not be re-told a stale "fetching 4h" from a run that has since moved on.
+    """
+    bus = EventBus()
+    sub = bus.subscribe()
+    try:
+        durable = bus.publish("signal.created", {"n": 1})
+        transient = bus.publish("run.progress", {"phase": "fetching"}, buffer=False)
+
+        # Both reach the live subscriber, in order.
+        first = await asyncio.wait_for(sub.get(), timeout=1)
+        second = await asyncio.wait_for(sub.get(), timeout=1)
+        assert first.id == durable.id
+        assert second.id == transient.id
+
+        # But only the durable event is retained for resume.
+        replayed = bus.replay_since(0)
+        assert [e.id for e in replayed] == [durable.id]
+    finally:
+        sub.close()
+
+
 def test_replay_buffer_is_bounded():
     bus = EventBus(replay_buffer=2)
     bus.publish("signal.created", {"n": 1})
@@ -110,7 +135,10 @@ def test_null_bus_is_inert():
     assert event.id == 0  # a throwaway event, nothing recorded
 
 
-@pytest.mark.parametrize("event_type", ["signal.created", "signal.closed", "run.finished"])
+@pytest.mark.parametrize(
+    "event_type",
+    ["signal.created", "signal.closed", "run.started", "run.progress", "run.finished"],
+)
 def test_all_event_types_publish(event_type):
     bus = EventBus()
     event = bus.publish(event_type, {})  # type: ignore[arg-type]

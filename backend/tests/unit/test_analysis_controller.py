@@ -649,7 +649,7 @@ class _CapturingBus:
     def __init__(self) -> None:
         self.events: list = []
 
-    def publish(self, event_type, data):
+    def publish(self, event_type, data, *, buffer=True):
         from datetime import UTC, datetime
 
         from app.services.events import Event
@@ -671,6 +671,14 @@ async def test_publishes_signal_created_and_run_finished_after_commit():
     # One scalp + one swing created, then a single run.finished.
     assert len(created) == 2
     assert len(finished) == 1
+    # The run narrates its progress: a run.started up front, then per-phase
+    # run.progress frames (fetching/analyzing/scoring/persisting) for the UI.
+    started = [e for e in bus.events if e.type == "run.started"]
+    progress = [e for e in bus.events if e.type == "run.progress"]
+    assert len(started) == 1
+    assert started[0].data["pairs_total"] == 1
+    phases = {e.data["phase"] for e in progress}
+    assert {"fetching", "analyzing", "scoring", "persisting"} <= phases
     # Payloads carry the projected scalar fields the stream/notifier consume.
     payload = created[0].data
     assert payload["pair"] == "XAUUSD"
@@ -689,5 +697,11 @@ async def test_no_events_published_when_persistence_fails():
     with pytest.raises(RuntimeError):
         await ctrl.run_analysis()
 
-    # The commit never happened, so nothing must have been announced.
-    assert bus.events == []
+    # The commit never happened, so no *durable* event (a created signal or a
+    # finished run) must have been announced. Transient progress narration
+    # (run.started/run.progress) emitted before the failing persist is fine — the
+    # run genuinely started; it just couldn't save.
+    durable = [
+        e for e in bus.events if e.type in {"signal.created", "signal.closed", "run.finished"}
+    ]
+    assert durable == []

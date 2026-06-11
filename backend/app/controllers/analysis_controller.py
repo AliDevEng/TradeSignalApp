@@ -111,6 +111,17 @@ _FEEDBACK_LOOKBACK: Final[int] = 20
 # R figures in the feedback summary share the evaluator's 4-decimal scale.
 _R_QUANTUM: Final[Decimal] = Decimal("0.0001")
 
+# The ordered phases a run narrates over the event bus (``run.progress``). The
+# frontend renders these as a stepper, so the vocabulary is a shared contract —
+# keep it in sync with ``frontend/src/types/stream.ts``. ``persisting`` is the
+# terminal phase before ``run.finished`` fires.
+PROGRESS_PHASES: Final[tuple[str, ...]] = (
+    "fetching",
+    "analyzing",
+    "scoring",
+    "persisting",
+)
+
 
 def _utcnow() -> datetime:
     """Timezone-aware UTC now. Injected via the constructor so tests can pin it."""
@@ -227,6 +238,22 @@ class _PairOutcome:
         failed outcome), so a successful analysis always persists two signals.
         """
         return not self.failed and self.dual is not None and self.indicators is not None
+
+
+@dataclass(slots=True)
+class _ProgressContext:
+    """Mutable per-run progress bookkeeping for the ``run.progress`` narration.
+
+    Carries the run id and pair total once, and a single ``completed`` counter the
+    pair loop advances as each pair finishes — so every progress event reports
+    consistent ``pairs_completed``/``pairs_total`` figures the UI turns into a bar.
+    Safe without locking: the pipeline runs on one event loop and the increment
+    never yields mid-update.
+    """
+
+    run_id: uuid.UUID
+    pairs_total: int
+    completed: int = 0
 
 
 class AnalysisController:
@@ -355,13 +382,23 @@ class AnalysisController:
             ",".join(self._timeframes),
         )
 
+        # Narrate the run so the UI can show the otherwise-invisible background
+        # work in real time (transient, never buffered for replay).
+        progress = _ProgressContext(run_id=run_id, pairs_total=len(targets))
+        self._emit_run_started(progress, trigger)
+
         # Fetch upcoming high-impact events once per run (cheap, reused across
         # every pair), so a calendar outage can't fail individual pairs.
         events = await self._fetch_events(started_at)
 
         # The slow part: network IO across providers, owning no DB connection.
-        outcomes = await self._analyze_pairs(targets, events)
+        outcomes = await self._analyze_pairs(targets, events, progress)
 
+        self._emit_progress(
+            progress,
+            phase="persisting",
+            message="Saving signals to the database…",
+        )
         try:
             run, signals = await self._finalize_run(run_id, outcomes)
         except Exception:
@@ -387,6 +424,60 @@ class AnalysisController:
             len(signals),
         )
         return run
+
+    # ── Real-time progress narration ─────────────────────────────────────────
+
+    def _emit_run_started(self, progress: _ProgressContext, trigger: AnalysisRunTrigger) -> None:
+        """Announce that a cycle has begun, so the UI flips to "running" at once.
+
+        Buffered (``run.started`` is durable) so a client that connects a beat
+        after the run opens still learns a cycle is in flight via replay.
+        """
+        try:
+            self._events.publish(
+                "run.started",
+                {
+                    "run_id": str(progress.run_id),
+                    "trigger": trigger.value,
+                    "pairs_total": progress.pairs_total,
+                    "primary_timeframe": self._timeframe,
+                    "timeframes": list(self._timeframes),
+                },
+            )
+        except Exception:  # progress is best-effort — never let it disturb a run
+            logger.exception("Failed to publish run.started for %s", progress.run_id)
+
+    def _emit_progress(
+        self,
+        progress: _ProgressContext,
+        *,
+        phase: str,
+        message: str,
+        pair: str | None = None,
+        **extra: object,
+    ) -> None:
+        """Publish one transient ``run.progress`` frame. Never raises.
+
+        Not buffered: a reconnecting client wants the *current* phase the next
+        frame carries, not a stale "fetching 4h" from a run that has since moved
+        on — so these stay out of the replay ring (``buffer=False``).
+        """
+        try:
+            self._events.publish(
+                "run.progress",
+                {
+                    "run_id": str(progress.run_id),
+                    "phase": phase,
+                    "message": message,
+                    "pair": pair,
+                    "pairs_total": progress.pairs_total,
+                    "pairs_completed": progress.completed,
+                    **extra,
+                },
+                buffer=False,
+            )
+        except Exception:  # progress is best-effort — never let it disturb a run
+            logger.exception("Failed to publish run.progress for %s", progress.run_id)
 
     # ── Real-time events ─────────────────────────────────────────────────────
 
@@ -532,7 +623,10 @@ class AnalysisController:
         return ()
 
     async def _analyze_pairs(
-        self, targets: Sequence[_PairTarget], events: tuple[EconomicEvent, ...]
+        self,
+        targets: Sequence[_PairTarget],
+        events: tuple[EconomicEvent, ...],
+        progress: _ProgressContext,
     ) -> list[_PairOutcome]:
         """Analyse every pair, up to ``_max_concurrency`` at a time.
 
@@ -550,12 +644,19 @@ class AnalysisController:
 
         async def _guarded(target: _PairTarget) -> _PairOutcome:
             async with semaphore:
-                return await self._analyze_pair(target, events)
+                outcome = await self._analyze_pair(target, events, progress)
+                # Advance the shared completion tally as each pair lands, so the
+                # next progress frame (and the UI's bar) reflects real headway.
+                progress.completed += 1
+                return outcome
 
         return list(await asyncio.gather(*(_guarded(target) for target in targets)))
 
     async def _analyze_pair(
-        self, target: _PairTarget, events: tuple[EconomicEvent, ...]
+        self,
+        target: _PairTarget,
+        events: tuple[EconomicEvent, ...],
+        progress: _ProgressContext,
     ) -> _PairOutcome:
         """Fetch → compute → reason for a single pair, isolating its failures.
 
@@ -576,7 +677,17 @@ class AnalysisController:
             # Sequential by design: a single pair's handful of calls stays well
             # inside the provider's per-minute budget, and any one failing fails
             # just this pair (the run continues for the others).
-            for timeframe in self._timeframes:
+            total_tf = len(self._timeframes)
+            for index, timeframe in enumerate(self._timeframes, start=1):
+                self._emit_progress(
+                    progress,
+                    phase="fetching",
+                    message=f"Loading {target.symbol} {timeframe} candles",
+                    pair=target.symbol,
+                    timeframe=timeframe,
+                    step=index,
+                    steps_total=total_tf,
+                )
                 candles = await self._market_data.fetch_candles(
                     target.symbol,
                     timeframe=timeframe,
@@ -611,6 +722,12 @@ class AnalysisController:
                 swing_performance=target.swing_performance,
                 events=symbol_events,
             )
+            self._emit_progress(
+                progress,
+                phase="analyzing",
+                message=f"AI analyzing {target.symbol} across {total_tf} timeframes",
+                pair=target.symbol,
+            )
             result = await self._ai.analyze(context)
         except ServiceError as exc:
             logger.warning("Pair %s failed analysis: %s", target.symbol, exc)
@@ -622,6 +739,12 @@ class AnalysisController:
         # Pure post-processing: gate each bias into an actionable/"bias-only"
         # verdict from the levels + evidence. Cannot fail, so it sits outside the
         # IO try.
+        self._emit_progress(
+            progress,
+            phase="scoring",
+            message=f"Scoring {target.symbol} setup quality",
+            pair=target.symbol,
+        )
         verdicts = self._evaluate_quality(result.dual, views=views, events=symbol_events)
         return _PairOutcome(
             target=target,

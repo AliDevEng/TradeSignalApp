@@ -14,7 +14,7 @@ requires it, so precision is preserved everywhere it can be.
 from __future__ import annotations
 
 import abc
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -68,6 +68,26 @@ class Candle(BaseModel):
     # Spot FX/metals feeds frequently omit real volume; keep it optional
     # rather than inventing a zero that an indicator might trust.
     volume: Decimal | None = None
+
+    @field_validator("timestamp")
+    @classmethod
+    def _timestamp_is_utc_aware(cls, value: datetime) -> datetime:
+        """Normalise every candle timestamp to a timezone-aware UTC instant.
+
+        Providers hand back bar times in assorted shapes — Twelve Data, queried
+        with ``timezone=UTC``, returns a *naive* ``"YYYY-MM-DD HH:MM:SS"`` string
+        that pydantic parses without a tzinfo. Left naive, that timestamp can't be
+        compared against the timezone-aware ``generated_at`` the database stores,
+        which silently breaks the outcome evaluator (``can't compare offset-naive
+        and offset-aware datetimes``). Anchoring tz here — at the single shape the
+        whole pipeline speaks — fixes it once for every downstream consumer
+        (evaluator, cache freshness, indicators) rather than at each call site. A
+        naive value is taken to be UTC (the interval we request); an aware value is
+        converted to UTC so ordering and arithmetic are always in one frame.
+        """
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @field_validator("open", "high", "low", "close")
     @classmethod

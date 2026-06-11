@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   notificationForEvent,
   parseStreamEvent,
+  progressFromEvent,
   queryKeysToInvalidate,
   shouldSurfaceEvent,
   type SurfacePrefs
@@ -53,6 +54,51 @@ describe("queryKeysToInvalidate", () => {
       ["analysis-runs"],
       ["pipeline-status"]
     ]);
+  });
+
+  it("flips pipeline status the instant a run starts", () => {
+    expect(queryKeysToInvalidate("run.started")).toEqual([["pipeline-status"]]);
+  });
+
+  it("does not refetch on run.progress (store-driven)", () => {
+    expect(queryKeysToInvalidate("run.progress")).toEqual([]);
+  });
+});
+
+describe("progressFromEvent", () => {
+  it("projects a run.progress frame into a snapshot", () => {
+    const snapshot = progressFromEvent(
+      event("run.progress", {
+        run_id: "run-1",
+        phase: "fetching",
+        message: "Loading XAUUSD 4h candles",
+        pair: "XAUUSD",
+        pairs_total: 1,
+        pairs_completed: 0,
+        step: 3,
+        steps_total: 6
+      })
+    );
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.runId).toBe("run-1");
+    expect(snapshot?.phase).toBe("fetching");
+    expect(snapshot?.pair).toBe("XAUUSD");
+    expect(snapshot?.step).toBe(3);
+    expect(snapshot?.stepsTotal).toBe(6);
+  });
+
+  it("treats an unknown phase as null but keeps the run live", () => {
+    const snapshot = progressFromEvent(
+      event("run.started", { run_id: "run-2", pairs_total: 2 })
+    );
+    expect(snapshot?.runId).toBe("run-2");
+    expect(snapshot?.phase).toBeNull();
+    expect(snapshot?.pairsTotal).toBe(2);
+  });
+
+  it("returns null for a non-progress event or a frame without a run id", () => {
+    expect(progressFromEvent(event("signal.created", { signal_id: "x" }))).toBeNull();
+    expect(progressFromEvent(event("run.progress", { phase: "scoring" }))).toBeNull();
   });
 });
 

@@ -94,6 +94,26 @@ async def test_fetch_candles_parses_and_orders_ascending():
     await provider.aclose()
 
 
+async def test_parsed_candle_timestamps_are_utc_aware():
+    """Twelve Data returns naive ``"YYYY-MM-DD HH:MM:SS"`` strings (queried with
+    ``timezone=UTC``); the ``Candle`` must normalise them to tz-aware UTC.
+
+    Regression guard: left naive, a candle timestamp can't be compared against the
+    timezone-aware ``generated_at`` the database stores, which broke the outcome
+    evaluator with ``can't compare offset-naive and offset-aware datetimes``.
+    """
+    from datetime import UTC
+
+    provider = _provider_with_handler(lambda r: httpx.Response(200, json=_ok_payload(2)))
+    candles = await provider.fetch_candles("EURUSD", timeframe="1h", count=2)
+
+    assert candles, "expected at least one candle"
+    for candle in candles:
+        assert candle.timestamp.tzinfo is not None, "timestamp must be timezone-aware"
+        assert candle.timestamp.utcoffset() == UTC.utcoffset(None)
+    await provider.aclose()
+
+
 async def test_fetch_candles_maps_daily_interval():
     seen = {}
 

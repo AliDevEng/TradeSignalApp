@@ -7,12 +7,14 @@ import { env, STREAM_ENABLED } from "@/lib/env";
 import {
   notificationForEvent,
   parseStreamEvent,
+  progressFromEvent,
   queryKeysToInvalidate,
   shouldSurfaceEvent
 } from "@/lib/stream";
 import { track } from "@/lib/analytics";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useNotificationPrefsStore } from "@/store/notificationPrefsStore";
+import { usePipelineProgressStore } from "@/store/pipelineProgressStore";
 import { toast } from "@/store/toastStore";
 import { STREAM_EVENT_TYPES, type StreamStatus } from "@/types/stream";
 
@@ -75,6 +77,22 @@ export function useEventStream(): StreamStatus {
       // has muted notifications.
       for (const queryKey of queryKeysToInvalidate(event.type)) {
         void queryClient.invalidateQueries({ queryKey });
+      }
+      // Drive the live workflow stepper: start/advance on run.started/progress,
+      // clear when the run finishes. Independent of notification prefs — the
+      // stepper is ambient status, never a toast.
+      if (event.type === "run.started" || event.type === "run.progress") {
+        const progress = progressFromEvent(event);
+        if (progress) {
+          usePipelineProgressStore.getState().setProgress(progress);
+        }
+      } else if (event.type === "run.finished") {
+        const runId = event.data.run_id;
+        if (typeof runId === "string") {
+          usePipelineProgressStore.getState().clearForRun(runId);
+        } else {
+          usePipelineProgressStore.getState().clear();
+        }
       }
       // Read prefs imperatively so changing them never re-opens the stream.
       if (!shouldSurfaceEvent(event, useNotificationPrefsStore.getState())) {

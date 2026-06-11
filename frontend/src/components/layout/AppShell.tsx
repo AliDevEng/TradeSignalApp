@@ -3,22 +3,12 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Activity,
-  BarChart3,
-  ChevronRight,
-  CircleCheckBig,
-  Command,
-  Gauge,
-  LineChart,
-  Radar,
-  Settings,
-  ServerCog
-} from "lucide-react";
+import { ChevronRight, Command, Radar, Settings } from "lucide-react";
 
 import { AccountBalancePill } from "@/components/layout/AccountBalancePill";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { LiveIndicator } from "@/components/layout/LiveIndicator";
+import { MobileNav } from "@/components/layout/MobileNav";
 import { NextScanChip } from "@/components/layout/NextScanChip";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { StoreHydration } from "@/components/layout/StoreHydration";
@@ -27,39 +17,13 @@ import { Button } from "@/components/ui/Button";
 import { useEventStream } from "@/hooks/useEventStream";
 import { track } from "@/lib/analytics";
 import { env } from "@/lib/env";
+import { isActiveRoute, primaryNav } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { useUIStore } from "@/store/uiStore";
 
 type AppShellProps = Readonly<{
   children: React.ReactNode;
 }>;
-
-// Primary destinations shown in the top bar. Utility routes (System, Settings)
-// live as icons on the right so the bar stays decision-focused.
-const primaryNav = [
-  { label: "Dashboard", href: "/dashboard", icon: Gauge },
-  { label: "Signals", href: "/signals", icon: Activity },
-  { label: "Analysis", href: "/analysis", icon: BarChart3 },
-  { label: "Closed", href: "/closed", icon: CircleCheckBig },
-  { label: "Performance", href: "/performance", icon: LineChart }
-] as const;
-
-const utilityNav = [
-  { label: "System", href: "/system", icon: ServerCog },
-  { label: "Settings", href: "/settings", icon: Settings }
-] as const;
-
-const mobileNav = [...primaryNav, ...utilityNav];
-
-function isActiveRoute(pathname: string, href: string): boolean {
-  const route = href.split("?")[0];
-
-  if (route === "/dashboard") {
-    return pathname === "/" || pathname === "/dashboard";
-  }
-
-  return pathname === route || pathname.startsWith(`${route}/`);
-}
 
 function labelForSegment(segment: string): string {
   const decoded = decodeURIComponent(segment);
@@ -198,35 +162,9 @@ export function AppShell({ children }: AppShellProps) {
               <Settings className="h-4 w-4" />
             </Link>
             <NotificationBell />
+            <MobileNav />
           </div>
         </div>
-
-        <nav
-          aria-label="Primary"
-          className="mx-auto flex w-full max-w-[1560px] gap-2 overflow-x-auto px-3 pb-3 sm:px-6 lg:hidden"
-        >
-          {mobileNav.map((item) => {
-            const Icon = item.icon;
-            const isActive = isActiveRoute(pathname, item.href);
-
-            return (
-              <Link
-                aria-current={isActive ? "page" : undefined}
-                className={cn(
-                  "inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors",
-                  isActive
-                    ? "border-[#8f6a20] bg-[var(--gold)] text-[#080a0f]"
-                    : "border-[#263247] bg-[#101722] text-[#a5afbf] hover:border-[#4d5c73] hover:text-[#fff8df]"
-                )}
-                href={item.href}
-                key={item.href}
-              >
-                <Icon aria-hidden className="h-4 w-4" />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
       </header>
 
       <main
